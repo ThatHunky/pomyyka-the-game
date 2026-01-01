@@ -17,20 +17,10 @@ COPY pyproject.toml ./
 
 # Install dependencies (extracted from pyproject.toml)
 # Note: For better caching, we install dependencies before copying source
+# Recommended change for Dockerfile
+COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    "aiogram>=3.17,<4.0" \
-    "asyncpg>=0.29.0" \
-    "sqlalchemy[asyncio]>=2.0.0" \
-    "alembic>=1.13.0" \
-    "redis>=5.2.0,<6.0" \
-    "apscheduler>=3.10.0" \
-    "google-genai==1.56.0" \
-    "pydantic>=2.10,<3.0" \
-    "pydantic-settings>=2.1.0" \
-    "structlog>=24.1.0" \
-    "python-dotenv>=1.0.0"
-
+    pip install --no-cache-dir .
 # Copy application code
 COPY . .
 
@@ -38,4 +28,4 @@ COPY . .
 USER appuser
 
 # Default command (can be overridden in docker-compose)
-CMD ["python", "-m", "bot"]
+CMD ["python", "main.py"]

@@ -48,6 +48,7 @@ globs: *
 *   Docker Compose should define `bot`, `db` (PostgreSQL), and `redis` services.
 *   Docker container must wait for Postgres and Redis to be healthy before starting the bot. This can be achieved through health checks in `docker-compose.yml` and/or retry logic in the Python startup code.
 *   Use named volumes for `pg_data` and `redis_data` to persist data.
+*   Dockerfile: The `CMD` instruction should be `CMD ["python", "main.py"]` to correctly start the bot application.
 
 ## REDIS
 
