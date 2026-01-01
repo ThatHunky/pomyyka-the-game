@@ -22,7 +22,8 @@ globs: *
 *   asyncpg
 *   alembic
 *   apscheduler
-*   google-genai
+*   google-genai: >=1.0.0
+*   pydantic: >=2.10
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
@@ -91,13 +92,10 @@ globs: *
     *   Input Prompt -> Gen Art -> Review.
     *   Input Stats -> Save.
     *   **Nano Banana Integration**:
-        *   Use `google-genai` to generate art.
+        *   Use `NanoBananaService` to generate art.
         *   Prompt: "Trading card art, [User Prompt], style of [Biome Style]".
-        *   The `generate_card_image()` function in `handlers/admin.py` is a placeholder because Google's Generative AI (gemini) library primarily generates text, not images. The function structure is in place with:
-            *   Proper prompt formatting: `"Trading card art, {user_prompt}, style of {biome_style}"`
-            *   Error handling
-            *   Logging
-        *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return an image URL string.
+        *   The `generate_card_image()` function in `handlers/admin.py` generates card image using Nano Banana Pro (Gemini 3 Pro Image).
+        *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return a relative filepath to saved image.
         *   The flow continues even if image generation fails (image_url can be None), allowing cards to be created without images if needed.
 *   Implement `handlers/admin_autocard.py`.
     *   Command: `/autocard` (reply to a user's message to target them).
@@ -187,24 +185,31 @@ globs: *
         *   Init with `GEMINI_API_KEY`.
         *   Method `generate_blueprint(user_context_logs: list[str]) -> CardBlueprint`:
             *   **System Instruction**: Convert the "Gemini Gem" prompt provided earlier into a Python string. Crucially, emphasize the output must be valid JSON matching the `CardBlueprint` schema.
-            *   **Call Gemini**: Use a model like `gemini-1.5-pro-latest` with `generation_config={"response_mime_type": "application/json"}`.
+            *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content` and `generation_config={"response_mime_type": "application/json"}`. Sticking to the default thinking level (which is usually "Dynamic" for Flash 3) is safer for now to avoid 400 Bad Request errors.
             *   **Parsing**: Use `CardBlueprint.model_validate_json(response.text)` to ensure robust parsing.
             *   **Error Handling**: Catch validation errors and retry once if Gemini hallucinates the schema.
 *   Create `services/art_forge.py`.
-    *   Stack: `google-genai` (for Imagen/Nano Banana Pro).
+    *   Stack: `google-genai` (for Gemini 3 Pro Image).
     *   **Style Constants**:
         *   Define a constant string `UNIFORM_STYLE_GUIDE`: "Trading card illustration, cohesive high fantasy cyberpunk fusion art style, ornate border design elements, digital painting, masterpiece, highly detailed, 8k resolution, cinematic lighting, rich textures."
     *   **Class `ArtForgeService`**:
         *   Init with `GEMINI_API_KEY` and store pass for `media/cards/` directory.
         *   Method `forge_card_image(blueprint_prompt: str, biome: BiomeType) -> str (filepath)`:
             *   **Combine Prompt**: f"{UNIFORM_STYLE_GUIDE}. Subject: {blueprint_prompt}. Biome theme: {biome.value}."
-            *   **Call API**: Use the Gemini Image Generation model.
+            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"], safety_settings=[types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_ONLY_HIGH")])`.
             *   **Save**: Save resulting binary to `media/cards/{uuid4()}.png`.
             *   **Return**: Relative path to the saved image.
             *   **Error Handling**: Handle rate limits with exponential backoff.
-            *   **Nano Banana Pro Model Update (2026-01-01)**:
-                *   **Model ID**: Use `gemini-3-pro-image-preview`.
-                *   **API Method**: Use `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"])`.
-                *   **Prompt Engineering**:
-                    *   Include `person_generation="allow_adult"` (or equivalent safety setting) if necessary for generating "Real People" cards, or handle safety violations gracefully.
-                    *   Add `aspect_ratio="3:4"` (Standard Trading Card) to the config if supported via `image_config=types.ImageConfig(aspect_ratio="3:4")`. The `image_size` parameter can also be specified with options such as `"1K"`, `"2K"`, and `"4K"`.
+*   Create `services/nano_banana.py`.
+    *   Inherits from `ArtForgeService` to maintain style consistency.
+    *   Provides `generate_from_prompt()` method for manual flows.
+    *   Uses the same underlying generation logic as `ArtForgeService`.
+
+## UTILS
+
+*   Create `utils/images.py` helper for image saving
+    *   Function `save_generated_image(image_bytes: bytes, directory: str = "media/cards") -> str`:
+        *   Decodes bytes if needed.
+        *   Generates a UUID filename.
+        *   Saves to disk.
+        *   Returns the relative filepath.

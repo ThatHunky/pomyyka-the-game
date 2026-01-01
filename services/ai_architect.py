@@ -146,6 +146,8 @@ Return ONLY valid JSON matching the CardBlueprint schema. No markdown, no code b
 
                 # Use unified SDK with JSON schema enforcement
                 # Build contents as a simple string (the SDK will handle conversion)
+                # Note: Using default thinking level for Gemini 3 Flash (usually "Dynamic")
+                # to avoid 400 Bad Request errors until SDK fully supports explicit thinking_config
                 response = self._client.models.generate_content(
                     model=self._model_id,
                     contents=user_message,
