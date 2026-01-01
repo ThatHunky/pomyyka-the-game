@@ -3,7 +3,6 @@
 import re
 from typing import Optional
 
-import google.generativeai as genai
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
@@ -21,6 +20,7 @@ from database.enums import BiomeType, Rarity
 from database.models import CardTemplate
 from database.session import get_session
 from logging_config import get_logger
+from services.nano_banana import NanoBananaService
 
 logger = get_logger(__name__)
 
@@ -130,39 +130,42 @@ async def process_biome_selection(
 
 async def generate_card_image(user_prompt: str, biome_style: str) -> Optional[str]:
     """
-    Generate card image using Google GenAI.
+    Generate card image using Nano Banana Pro (Gemini 3 Pro Image).
 
     Args:
         user_prompt: User's art description prompt.
         biome_style: Biome style for the card.
 
     Returns:
-        Image URL if generation successful, None otherwise.
+        Relative filepath to saved image if generation successful, None otherwise.
     """
     if not settings.gemini_api_key:
         logger.warning("Gemini API key not configured, skipping image generation")
         return None
 
     try:
-        genai.configure(api_key=settings.gemini_api_key)
-        full_prompt = f"Trading card art, {user_prompt}, style of {biome_style}"
+        # Parse biome from string
+        biome = BiomeType(biome_style)
 
-        # Note: Google's Generative AI (gemini) primarily generates text, not images.
-        # For actual image generation, you may need to use a different service
-        # such as Google's Imagen API, DALL-E, Stable Diffusion, etc.
-        # This function should be adapted based on the actual image generation service used.
+        # Use NanoBananaService for manual image generation
+        nano_banana = NanoBananaService()
+        image_path = await nano_banana.generate_from_prompt(user_prompt, biome)
 
-        # Placeholder implementation - replace with actual image generation API call
-        # For example, if using a service that returns image URLs:
-        # response = image_generation_service.generate(full_prompt)
-        # return response.image_url
+        logger.info(
+            "Card image generated successfully",
+            image_path=image_path,
+            biome=biome_style,
+        )
+        return image_path
 
-        logger.warning(
-            "Image generation placeholder - implement actual image generation service",
-            prompt=full_prompt,
+    except ValueError as e:
+        logger.error(
+            "Invalid biome type",
+            biome=biome_style,
+            error=str(e),
+            exc_info=True,
         )
         return None
-
     except Exception as e:
         logger.error("Error in image generation", error=str(e), exc_info=True)
         return None

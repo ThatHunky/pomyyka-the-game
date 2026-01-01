@@ -26,7 +26,7 @@ globs: *
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
-*   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk").
+*   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk"), `ADMIN_USER_IDS` (comma-separated list of Telegram user IDs, for admin authentication).
 
 ## CODING STANDARDS
 
@@ -67,6 +67,11 @@ globs: *
 *   Create `ChatTrackingMiddleware` that intercepts every update.
 *   If `chat.type` is `supergroup` or `group`:
     *   Upsert the `GroupChat` table (INSERT ON CONFLICT DO NOTHING). This ensures we have a list of all groups the bot is in.
+*   Implement `middlewares/logger.py` to log messages in group chats.
+    *   Create a new middleware that runs after `GroupTrackingMiddleware`.
+    *   **Logic**: For every text message in a group chat:
+        *   Fire-and-forget an async task to insert the message into `MessageLog`.
+    *   **Optimization**: Do *not* log commands (starting with `/`).
 
 ## HANDLERS
 
@@ -88,12 +93,47 @@ globs: *
     *   **Nano Banana Integration**:
         *   Use `google-genai` to generate art.
         *   Prompt: "Trading card art, [User Prompt], style of [Biome Style]".
+        *   The `generate_card_image()` function in `handlers/admin.py` is a placeholder because Google's Generative AI (gemini) library primarily generates text, not images. The function structure is in place with:
+            *   Proper prompt formatting: `"Trading card art, {user_prompt}, style of {biome_style}"`
+            *   Error handling
+            *   Logging
+        *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return an image URL string.
+        *   The flow continues even if image generation fails (image_url can be None), allowing cards to be created without images if needed.
+*   Implement `handlers/admin_autocard.py`.
+    *   Command: `/autocard` (reply to a user's message to target them).
+    *   **Logic Flow (Async):**
+        1.  **Trigger**: Admin replies `/autocard` to a user message.
+        2.  **Feedback**: Bot sends "🕵️‍♂️ Аналізую особистість [User]..." (Analyzing personality...).
+        3.  **Fetch Context**:
+            *   DB Query: Select last 50 messages from `MessageLog` for this `target_user_id`.
+            *   Flatten into a list of strings.
+        4.  **Architect Step**:
+            *   Bot edits message: "🧠 Проєктую архітектуру картки..." (Designing card architecture...).
+            *   Call `CardArchitectService.generate_blueprint(logs, target_user_id)`. Pass the `target_user_id` to the service.
+        5.  **Art Forge Step**:
+            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in nano-forge...).
+            *   Call `ArtForgeService.forge_card_image(blueprint.raw_image_prompt_en, blueprint.biome)`.
+        6.  **Preview & Confirmation**:
+            *   Bot deletes status message.
+            *   Send Photo (the generated image) with caption formatted using `blueprint` data (Name, Stats, Lore, Biome emoji).
+            *   Attach Inline Keyboard: "✅ Затвердити та Видати" (Approve & Issue) or "❌ Скасувати".
+        7.  **Finalize (On Button Click)**:
+            *   Save `CardTemplate` to DB.
+            *   Create `UserCard` for the target user instantly.
+            *   Edit message: "🎉 Картку [Card Name] створено та видано [User]!"
 
 ## DATABASE
 
 *   Use `database/session.py` for database session management.
 *   Use `AsyncSession` from SQLAlchemy for asynchronous database operations.
 *   Implement `get_session` dependency function to get database session.
+*   Modify `database/models.py` to add message logging.
+    *   **New Model `MessageLog`**:
+        *   `id` (BigInt, PK, auto-increment)
+        *   `user_id` (BigInt, FK to User.telegram_id, indexed)
+        *   `chat_id` (BigInt, FK to GroupChat.chat_id)
+        *   `content` (Text, store truncated message text up to 500 chars)
+        *   `created_at` (DateTime, default now, indexed)
 
 ## SCHEDULER
 
@@ -114,12 +154,57 @@ globs: *
     *   Optional max groups per run limit.
 *   The scheduler starts automatically when the bot starts and stops gracefully on shutdown.
 *   Integration: Start the scheduler in `main.py` on startup.
+*   Create `services/cleanup.py` with daily cleanup job.
+    *   **Logic**: `DELETE FROM message_logs WHERE created_at < now() - INTERVAL '7 days'`.
+    *   This keeps the database lean, only keeping recent context for generation.
 
 ## MAIN APPLICATION
 
 *   Create `main.py` as application entry point that:
     *   Initializes logging and database.
     *   Creates Bot and Dispatcher instances.
-    *   Registers routers (drops router, admin router).
+    *   Registers routers (drops router, admin router, admin_autocard router).
+    *   Registers middlewares (ChatTrackingMiddleware, MessageLoggingMiddleware) - order matters.
     *   Initializes and starts the scheduler on startup.
     *   Handles cleanup on shutdown.
+    *   Update `main.py` to register middleware and start cleanup scheduler.
+
+## AI SERVICES
+
+*   Create `services/ai_architect.py`.
+    *   Stack: `google-genai`, `pydantic`.
+    *   **Define Pydantic Model (`CardBlueprint`)**:
+        *   `target_user_id`: int
+        *   `card_name_ua`: str
+        *   `rarity`: Rarity Enum (Common, Rare, etc.)
+        *   `biome`: BiomeType Enum (Techno, Fire, etc.)
+        *   `stats_atk`: int (0-100)
+        *   `stats_def`: int (0-100)
+        *   `stats_meme`: int (0-100)
+        *   `lore_ua`: str (2 sentences max)
+        *   `raw_image_prompt_en`: str (Descriptive prompt for visual elements only)
+    *   **Class `CardArchitectService`**:
+        *   Init with `GEMINI_API_KEY`.
+        *   Method `generate_blueprint(user_context_logs: list[str]) -> CardBlueprint`:
+            *   **System Instruction**: Convert the "Gemini Gem" prompt provided earlier into a Python string. Crucially, emphasize the output must be valid JSON matching the `CardBlueprint` schema.
+            *   **Call Gemini**: Use a model like `gemini-1.5-pro-latest` with `generation_config={"response_mime_type": "application/json"}`.
+            *   **Parsing**: Use `CardBlueprint.model_validate_json(response.text)` to ensure robust parsing.
+            *   **Error Handling**: Catch validation errors and retry once if Gemini hallucinates the schema.
+*   Create `services/art_forge.py`.
+    *   Stack: `google-genai` (for Imagen/Nano Banana Pro).
+    *   **Style Constants**:
+        *   Define a constant string `UNIFORM_STYLE_GUIDE`: "Trading card illustration, cohesive high fantasy cyberpunk fusion art style, ornate border design elements, digital painting, masterpiece, highly detailed, 8k resolution, cinematic lighting, rich textures."
+    *   **Class `ArtForgeService`**:
+        *   Init with `GEMINI_API_KEY` and store pass for `media/cards/` directory.
+        *   Method `forge_card_image(blueprint_prompt: str, biome: BiomeType) -> str (filepath)`:
+            *   **Combine Prompt**: f"{UNIFORM_STYLE_GUIDE}. Subject: {blueprint_prompt}. Biome theme: {biome.value}."
+            *   **Call API**: Use the Gemini Image Generation model.
+            *   **Save**: Save resulting binary to `media/cards/{uuid4()}.png`.
+            *   **Return**: Relative path to the saved image.
+            *   **Error Handling**: Handle rate limits with exponential backoff.
+            *   **Nano Banana Pro Model Update (2026-01-01)**:
+                *   **Model ID**: Use `gemini-3-pro-image-preview`.
+                *   **API Method**: Use `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"])`.
+                *   **Prompt Engineering**:
+                    *   Include `person_generation="allow_adult"` (or equivalent safety setting) if necessary for generating "Real People" cards, or handle safety violations gracefully.
+                    *   Add `aspect_ratio="3:4"` (Standard Trading Card) to the config if supported via `image_config=types.ImageConfig(aspect_ratio="3:4")`. The `image_size` parameter can also be specified with options such as `"1K"`, `"2K"`, and `"4K"`.

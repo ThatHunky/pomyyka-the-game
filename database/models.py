@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, Enum as SQLEnum, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -88,3 +88,27 @@ class UserCard(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="cards")
     template: Mapped["CardTemplate"] = relationship("CardTemplate", back_populates="user_cards")
+
+
+class MessageLog(Base):
+    """Message log for storing chat messages."""
+
+    __tablename__ = "message_logs"
+    __table_args__ = (
+        Index("ix_message_logs_user_id", "user_id"),
+        Index("ix_message_logs_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), nullable=False
+    )
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("group_chats.chat_id", ondelete="CASCADE"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

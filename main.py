@@ -9,9 +9,13 @@ from aiogram.enums import ParseMode
 from config import settings
 from database.session import init_db
 from handlers.admin import router as admin_router
+from handlers.admin_autocard import router as admin_autocard_router
 from handlers.drops import router as drops_router
 from logging_config import setup_logging, get_logger
+from middlewares.group_tracker import ChatTrackingMiddleware
+from middlewares.logger import MessageLoggingMiddleware
 from services import DropScheduler
+from services.cleanup import CleanupService
 
 logger = get_logger(__name__)
 
@@ -34,15 +38,25 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
+    # Register middlewares (order matters - ChatTrackingMiddleware runs first)
+    dp.message.middleware(ChatTrackingMiddleware())
+    dp.message.middleware(MessageLoggingMiddleware())
+    logger.info("Middlewares registered")
+
     # Register routers
     dp.include_router(admin_router)
+    dp.include_router(admin_autocard_router)
     dp.include_router(drops_router)
     logger.info("Routers registered")
 
-    # Initialize and start scheduler
-    scheduler = DropScheduler(bot, interval_minutes=10, drop_chance=0.05)
-    await scheduler.start()
-    logger.info("Scheduler started")
+    # Initialize and start schedulers
+    drop_scheduler = DropScheduler(bot, interval_minutes=10, drop_chance=0.05)
+    await drop_scheduler.start()
+    logger.info("Drop scheduler started")
+
+    cleanup_service = CleanupService(retention_days=7)
+    await cleanup_service.start()
+    logger.info("Cleanup service started")
 
     try:
         # Start polling
@@ -53,7 +67,8 @@ async def main() -> None:
         raise
     finally:
         # Cleanup
-        await scheduler.stop()
+        await drop_scheduler.stop()
+        await cleanup_service.stop()
         await bot.session.close()
         logger.info("Bot shutdown complete")
 
