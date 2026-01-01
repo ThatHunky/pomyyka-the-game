@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +28,31 @@ class Settings(BaseSettings):
 
     # Locale Configuration
     locale: str = Field(default="uk", alias="LOCALE")
+
+    # Admin Configuration
+    admin_user_ids: list[int] = Field(
+        default_factory=list,
+        alias="ADMIN_USER_IDS",  # Comma-separated list of Telegram user IDs
+    )
+
+    @field_validator("admin_user_ids", mode="before")
+    @classmethod
+    def parse_admin_user_ids(cls, v: str | list[int] | None) -> list[int]:
+        """Parse comma-separated string of user IDs into list."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+        return []
+
+    @property
+    def is_admin_enabled(self) -> bool:
+        """Check if admin user IDs are configured."""
+        return bool(self.admin_user_ids)
 
 
 settings = Settings()

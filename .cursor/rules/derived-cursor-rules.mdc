@@ -34,6 +34,7 @@ globs: *
 *   Output logs in JSON format using `structlog`.
 *   The application must be runnable without the Gemini API key being present (manual adding is acceptable). When `GEMINI_API_KEY` is not provided, Gemini-related functionality should be gracefully disabled.
 *   When tracking group chats in `middlewares/group_tracker.py`, use PostgreSQL's `INSERT ON CONFLICT DO NOTHING` to prevent errors when the bot joins a group it has already been in.
+*   All Admin prompts should be in Ukrainian.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -77,9 +78,48 @@ globs: *
         *   Edit message text: "✅ **[User]** блискавично схопив [Card Name]!" (Use Ukrainian).
     *   **If Fail**:
         *   Answer callback query with alert: "❌ Хтось виявився спритнішим!" (Alert/Toast).
+*   Create `handlers/admin.py` to handle admin commands.
+*   Implement Admin Card Creation Flow in `handlers/admin.py`.
+    *   **FSM**: States `WaitingForName`, `WaitingForArtPrompt`, `WaitingForStats`.
+    *   `/newcard` -> Input Name.
+    *   Select Biome (Inline Keyboard of Biomes).
+    *   Input Prompt -> Gen Art -> Review.
+    *   Input Stats -> Save.
+    *   **Nano Banana Integration**:
+        *   Use `google-genai` to generate art.
+        *   Prompt: "Trading card art, [User Prompt], style of [Biome Style]".
 
 ## DATABASE
 
 *   Use `database/session.py` for database session management.
 *   Use `AsyncSession` from SQLAlchemy for asynchronous database operations.
 *   Implement `get_session` dependency function to get database session.
+
+## SCHEDULER
+
+*   Implement `services/scheduler.py` using `apscheduler`.
+    *   Create `DropScheduler` class using APScheduler's `AsyncIOScheduler`.
+    *   Job `trigger_random_drops` runs every X minutes (default: 10, configurable).
+    *   Fetches active groups from the database.
+    *   For each group (or a random subset):
+        *   Roll RNG with configurable chance (default: 5%).
+        *   On success:
+            *   Calculates biome using `get_chat_biome(chat_id)`.
+            *   Selects a random `CardTemplate` where `biome_affinity == biome`.
+            *   Sends a message with the specified text and an inline "✋ Хапнути" button.
+            *   Uses `ClaimDropCallback` with the template ID.
+*   Scheduler is configured with:
+    *   Interval: 10 minutes (configurable via constructor).
+    *   Drop chance: 5% per group (configurable via constructor).
+    *   Optional max groups per run limit.
+*   The scheduler starts automatically when the bot starts and stops gracefully on shutdown.
+*   Integration: Start the scheduler in `main.py` on startup.
+
+## MAIN APPLICATION
+
+*   Create `main.py` as application entry point that:
+    *   Initializes logging and database.
+    *   Creates Bot and Dispatcher instances.
+    *   Registers routers (drops router, admin router).
+    *   Initializes and starts the scheduler on startup.
+    *   Handles cleanup on shutdown.

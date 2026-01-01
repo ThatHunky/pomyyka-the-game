@@ -266,3 +266,656 @@ No results found
 
 ---
 
+
+Creating the scheduler service. Checking how to access the bot instance for sending messages:
+
+
+---
+
+<tool-use data-tool-type="search" data-tool-name="grep">
+<details>
+<summary>Tool use: **grep** • Grep for "Bot|Dispatcher" in "." • 2 matches</summary>
+
+Output mode: content
+
+
+| File | Content | Line |
+|------|------|------|
+| `.\config.py` | `# Telegram Bot Configuration` | L17 |
+| `.\pyproject.toml` | `description = "Хроніки Помийки - A Ukrainian Telegram Card Game Bot"` | L8 |
+
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/drops.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Creating the scheduler service. Checking how inline buttons are created in the codebase:
+
+
+---
+
+<tool-use data-tool-type="search" data-tool-name="grep">
+<details>
+<summary>Tool use: **grep** • Grep for "InlineKeyboardButton|InlineKeyboardMarkup|callback_data" in "." • 6 matches</summary>
+
+Output mode: content
+
+
+| File | Content | Line |
+|------|------|------|
+| `.\handlers\drops.py` | `if button.callback_data and button.callback_data != "claim_drop":` | L65 |
+| `.\handlers\drops.py` | `parsed = ClaimDropCallback.unpack(button.callback_data)` | L68 |
+| `.\handlers\drops.py` | `callback_data: ClaimDropCallback,` | L98 |
+| `.\handlers\drops.py` | `callback_data: Parsed callback data with template_id.` | L106 |
+| `.\handlers\drops.py` | `template_id = UUID(callback_data.template_id)` | L126 |
+| `.\handlers\drops.py` | `template_id=callback_data.template_id,` | L130 |
+
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Creating the scheduler service:
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="write">
+
+<details><summary>Tool use: **write** • Edit file: services/scheduler.py</summary>
+
+**Chunk 1**
+Lines added: 231, lines removed: 1
+
+```diff
+@@ -1,1 +1,231 @@
+- 
++ """Scheduler service for triggering random drops in active groups."""
++ 
++ import random
++ from typing import Optional
++ from uuid import UUID
++ 
++ from aiogram import Bot
++ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
++ from apscheduler.schedulers.asyncio import AsyncIOScheduler
++ from sqlalchemy import select
++ 
++ from database.enums import BiomeType
++ from database.models import CardTemplate, GroupChat
++ from database.session import get_session
++ from handlers.drops import ClaimDropCallback
++ from logging_config import get_logger
++ from utils.biomes import get_chat_biome
++ 
++ logger = get_logger(__name__)
++ 
++ 
++ class DropScheduler:
++     """Scheduler for triggering random card drops in active groups."""
++ 
++     def __init__(
++         self,
++         bot: Bot,
++         interval_minutes: int = 10,
++         drop_chance: float = 0.05,
++         max_groups_per_run: Optional[int] = None,
++     ):
++         """
++         Initialize DropScheduler.
++ 
++         Args:
++             bot: Aiogram Bot instance for sending messages.
++             interval_minutes: Interval in minutes between scheduler runs (default: 10).
++             drop_chance: Probability of triggering a drop per group (default: 0.05 = 5%).
++             max_groups_per_run: Maximum number of groups to process per run. If None, process all active groups.
++         """
++         self._bot = bot
++         self._interval_minutes = interval_minutes
++         self._drop_chance = drop_chance
++         self._max_groups_per_run = max_groups_per_run
++         self._scheduler: Optional[AsyncIOScheduler] = None
++ 
++     async def start(self) -&gt; None:
++         """Start the scheduler."""
++         if self._scheduler is not None:
++             logger.warning("Scheduler already started")
++             return
++ 
++         self._scheduler = AsyncIOScheduler()
++         self._scheduler.add_job(
++             self._trigger_random_drops,
++             "interval",
++             minutes=self._interval_minutes,
++             id="trigger_random_drops",
++             replace_existing=True,
++         )
++         self._scheduler.start()
++ 
++         logger.info(
++             "Drop scheduler started",
++             interval_minutes=self._interval_minutes,
++             drop_chance=self._drop_chance,
++         )
++ 
++     async def stop(self) -&gt; None:
++         """Stop the scheduler."""
++         if self._scheduler is None:
++             return
++ 
++         self._scheduler.shutdown(wait=True)
++         self._scheduler = None
++         logger.info("Drop scheduler stopped")
++ 
++     async def _trigger_random_drops(self) -&gt; None:
++         """
++         Main job function: fetch active groups and trigger random drops.
++ 
++         This function:
++         1. Fetches active groups from DB
++         2. For each group (or random subset), rolls RNG
++         3. If successful, calculates biome and selects matching card template
++         4. Sends drop message with inline button
++         """
++         logger.debug("Starting random drops trigger job")
++ 
++         try:
++             # Fetch active groups
++             async for session in get_session():
++                 try:
++                     stmt = select(GroupChat).where(GroupChat.is_active == True)
++                     result = await session.execute(stmt)
++                     active_groups = result.scalars().all()
++ 
++                     if not active_groups:
++                         logger.debug("No active groups found")
++                         return
++ 
++                     # Optionally limit to random subset
++                     groups_to_process = active_groups
++                     if self._max_groups_per_run and len(active_groups) &gt; self._max_groups_per_run:
++                         groups_to_process = random.sample(
++                             active_groups, self._max_groups_per_run
++                         )
++ 
++                     logger.debug(
++                         "Processing groups for drops",
++                         total_groups=len(active_groups),
++                         processing=len(groups_to_process),
++                     )
++ 
++                     # Process each group
++                     for group in groups_to_process:
++                         await self._process_group_drop(session, group)
++ 
++                 finally:
++                     break
++ 
++         except Exception as e:
++             logger.error(
++                 "Error in trigger_random_drops job",
++                 error=str(e),
++                 exc_info=True,
++             )
++ 
++     async def _process_group_drop(self, session, group: GroupChat) -&gt; None:
++         """
++         Process a single group for potential drop.
++ 
++         Args:
++             session: Database session.
++             group: GroupChat instance to process.
++         """
++         # Roll RNG
++         if random.random() &gt;= self._drop_chance:
++             logger.debug("Drop roll failed", chat_id=group.chat_id)
++             return
++ 
++         logger.info("Drop roll successful", chat_id=group.chat_id)
++ 
++         try:
++             # Calculate biome
++             biome = get_chat_biome(group.chat_id)
++ 
++             # Select random CardTemplate matching biome
++             stmt = select(CardTemplate).where(CardTemplate.biome_affinity == biome)
++             result = await session.execute(stmt)
++             templates = result.scalars().all()
++ 
++             if not templates:
++                 logger.warning(
++                     "No card templates found for biome",
++                     chat_id=group.chat_id,
++                     biome=biome.value,
++                 )
++                 return
++ 
++             # Select random template
++             selected_template = random.choice(templates)
++ 
++             # Send drop message
++             await self._send_drop_message(group.chat_id, biome, selected_template)
++ 
++             logger.info(
++                 "Drop message sent",
++                 chat_id=group.chat_id,
++                 biome=biome.value,
++                 template_id=selected_template.id,
++                 template_name=selected_template.name,
++             )
++ 
++         except Exception as e:
++             logger.error(
++                 "Error processing group drop",
++                 chat_id=group.chat_id,
++                 error=str(e),
++                 exc_info=True,
++             )
++ 
++     async def _send_drop_message(
++         self, chat_id: int, biome: BiomeType, template: CardTemplate
++     ) -&gt; None:
++         """
++         Send drop message to chat with inline button.
++ 
++         Args:
++             chat_id: Telegram chat ID.
++             biome: Biome type for the message.
++             template: Selected card template.
++         """
++         try:
++             # Create callback data with template ID
++             callback_data = ClaimDropCallback(template_id=str(template.id))
++ 
++             # Create inline keyboard with claim button
++             keyboard = InlineKeyboardMarkup(
++                 inline_keyboard=[
++                     [
++                         InlineKeyboardButton(
++                             text="✋ Хапнути",
++                             callback_data=callback_data.pack(),
++                         )
++                     ]
++                 ]
++             )
++ 
++             # Send message
++             message_text = (
++                 f"⚡️ **Аномалія біому {biome.value} detected!**\n"
++                 "Тисни кнопку, щоб забрати!"
++             )
++ 
++             await self._bot.send_message(
++                 chat_id=chat_id,
++                 text=message_text,
++                 parse_mode="Markdown",
++                 reply_markup=keyboard,
++             )
++ 
++         except Exception as e:
++             logger.error(
++                 "Error sending drop message",
++                 chat_id=chat_id,
++                 template_id=template.id,
++                 error=str(e),
++                 exc_info=True,
++             )
++ 
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updating `services/__init__.py` to export the scheduler, then checking for a main entry point:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: services/__init__.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="glob_file_search">
+<details>
+<summary>Tool use: **glob_file_search** • Searched codebase "**/__main__.py" • **0** result in **1** directory</summary>
+
+Directory: **h:\repos\pomyyka-the-game** (0 file)
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="search" data-tool-name="codebase_search">
+<details>
+                <summary>Tool use: **codebase_search** • Searched codebase "Where is the application entry point that starts the bot and runs the event loop?" • **15** results</summary>
+            
+| File | Lines |
+|------|-------|
+| `docker-compose.yml` | L57 |
+| `Dockerfile` | L40 |
+| `config.py` | L32 |
+| `pyproject.toml` | L31 |
+| `.cursor/rules/derived-cursor-rules.mdc` | L45 |
+| `logging_config.py` | L40 |
+| `database/session.py` | L24-45 |
+| `middlewares/group_tracker.py` | L74 |
+| `database/session.py` | L45 |
+| `config.py` | L6-32 |
+| `middlewares/group_tracker.py` | L15-74 |
+| `services/redis_lock.py` | L195 |
+| `services/__init__.py` | L4 |
+| `handlers/__init__.py` | L |
+| `middlewares/__init__.py` | L4 |
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updating `services/__init__.py` and creating `main.py`:
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: services/__init__.py</summary>
+
+**Chunk 1**
+Lines added: 2, lines removed: 1
+
+```diff
+@@ -2,5 +2,6 @@
+  
+  from services.redis_lock import DropManager
++ from services.scheduler import DropScheduler
+  
+- __all__ = ["DropManager"]
++ __all__ = ["DropManager", "DropScheduler"]
+  
+```
+
+</details>
+
+</tool-use>
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="glob_file_search">
+<details>
+<summary>Tool use: **glob_file_search** • Searched codebase "main.py" • **0** result in **1** directory</summary>
+
+Directory: **h:\repos\pomyyka-the-game** (0 file)
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/__init__.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Creating `main.py` to integrate the scheduler. Checking how routers are structured:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/drops.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: logging_config.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Creating `main.py`:
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="write">
+
+<details><summary>Tool use: **write** • Edit file: main.py</summary>
+
+**Chunk 1**
+Lines added: 61, lines removed: 1
+
+```diff
+@@ -1,1 +1,61 @@
+- 
++ """Main entry point for the Telegram bot application."""
++ 
++ import asyncio
++ 
++ from aiogram import Bot, Dispatcher
++ from aiogram.client.default import DefaultBotProperties
++ from aiogram.enums import ParseMode
++ 
++ from config import settings
++ from database.session import init_db
++ from handlers.drops import router as drops_router
++ from logging_config import setup_logging, get_logger
++ from services import DropScheduler
++ 
++ logger = get_logger(__name__)
++ 
++ 
++ async def main() -&gt; None:
++     """Initialize and start the bot application."""
++     # Setup logging
++     setup_logging()
++ 
++     logger.info("Starting bot application")
++ 
++     # Initialize database
++     await init_db()
++     logger.info("Database initialized")
++ 
++     # Initialize bot and dispatcher
++     bot = Bot(
++         token=settings.bot_token,
++         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
++     )
++     dp = Dispatcher()
++ 
++     # Register routers
++     dp.include_router(drops_router)
++     logger.info("Routers registered")
++ 
++     # Initialize and start scheduler
++     scheduler = DropScheduler(bot, interval_minutes=10, drop_chance=0.05)
++     await scheduler.start()
++     logger.info("Scheduler started")
++ 
++     try:
++         # Start polling
++         logger.info("Starting bot polling")
++         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
++     except Exception as e:
++         logger.error("Error during bot polling", error=str(e), exc_info=True)
++         raise
++     finally:
++         # Cleanup
++         await scheduler.stop()
++         await bot.session.close()
++         logger.info("Bot shutdown complete")
++ 
++ 
++ if __name__ == "__main__":
++     asyncio.run(main())
++ 
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Checking for linting errors:
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 3 files</summary>
+      
+Lint paths:
+
+- `services/scheduler.py`
+- `main.py`
+- `services/__init__.py`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Verifying the scheduler code handles the session correctly. Reviewing the implementation:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: services/scheduler.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Verifying the scheduler implementation. Fixing a potential issue with early return:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: services/scheduler.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+## Summary
+
+Created the scheduler service and integrated it into the main application.
+
+### 1. Created `services/scheduler.py`
+- `DropScheduler` class using APScheduler's `AsyncIOScheduler`
+- Job `trigger_random_drops` runs every X minutes (default: 10, configurable)
+- Fetches active groups from the database
+- For each group (or random subset):
+  - Rolls RNG with configurable chance (default: 5%)
+  - On success:
+    - Calculates biome using `get_chat_biome(chat_id)`
+    - Selects a random `CardTemplate` where `biome_affinity == biome`
+    - Sends a message with the specified text and an inline "✋ Хапнути" button
+    - Uses `ClaimDropCallback` with the template ID
+
+### 2. Updated `services/__init__.py`
+- Exported `DropScheduler` for easy importing
+
+### 3. Created `main.py`
+- Application entry point that:
+  - Initializes logging and database
+  - Creates Bot and Dispatcher instances
+  - Registers routers (drops router)
+  - Initializes and starts the scheduler on startup
+  - Handles cleanup on shutdown
+
+The scheduler is configured with:
+- Interval: 10 minutes (configurable via constructor)
+- Drop chance: 5% per group (configurable via constructor)
+- Optional max groups per run limit
+
+The scheduler starts automatically when the bot starts and stops gracefully on shutdown.
+
+---
+

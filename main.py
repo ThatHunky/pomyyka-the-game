@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 
 from config import settings
 from database.session import init_db
+from handlers.admin import router as admin_router
 from handlers.drops import router as drops_router
 from logging_config import setup_logging, get_logger
 from services import DropScheduler
@@ -34,6 +35,7 @@ async def main() -> None:
     dp = Dispatcher()
 
     # Register routers
+    dp.include_router(admin_router)
     dp.include_router(drops_router)
     logger.info("Routers registered")
 
