@@ -58,6 +58,13 @@ async def main() -> None:
     await cleanup_service.start()
     logger.info("Cleanup service started")
 
+    # Delete webhook if bot was previously running on webhook mode
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted (if existed)")
+    except Exception as e:
+        logger.warning("Failed to delete webhook (may not exist)", error=str(e))
+
     try:
         # Start polling
         logger.info("Starting bot polling")

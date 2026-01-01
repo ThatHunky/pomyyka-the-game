@@ -159,40 +159,34 @@ class ArtForgeService:
                 model=self._model_id,
                 contents=prompt,
                 config=types.GenerateContentConfig(
+                    # Explicitly request IMAGE modality (SDK 1.56 feature)
                     response_modalities=["IMAGE"],
                     safety_settings=[
                         types.SafetySetting(
                             category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
                             threshold="BLOCK_ONLY_HIGH"
                         )
-                    ]
+                    ],
+                    # "Nano Banana Pro" supports standard aspect ratios
+                    aspect_ratio="3:4"
                 )
             )
 
-            # Extract image from response
-            # Structure: response.candidates[0].content.parts[0].inline_data.data
+            # In SDK 1.56, image data is consistently here:
             if not response.candidates:
                 raise ValueError("No candidates in API response")
 
-            candidate = response.candidates[0]
-            if not hasattr(candidate, "content") or not candidate.content:
-                raise ValueError("No content in candidate")
+            for part in response.candidates[0].content.parts:
+                if part.inline_data:
+                    data = part.inline_data.data
+                    # Handle base64 encoded data if needed
+                    if isinstance(data, str):
+                        import base64
+                        return base64.b64decode(data)
+                    return data
 
-            if not hasattr(candidate.content, "parts") or not candidate.content.parts:
-                raise ValueError("No parts in content")
-
-            for part in candidate.content.parts:
-                if hasattr(part, "inline_data") and part.inline_data:
-                    if hasattr(part.inline_data, "data"):
-                        data = part.inline_data.data
-                        # Handle base64 encoded data if needed
-                        if isinstance(data, str):
-                            import base64
-                            return base64.b64decode(data)
-                        return data
-
-            raise ValueError("Could not extract image data from API response")
+            raise ValueError("No image data in response")
 
         except Exception as e:
-            # Re-raise with context for better error handling
-            raise RuntimeError(f"Image generation API call failed: {str(e)}") from e
+            logger.error(f"Art Forge failed: {e}")
+            raise

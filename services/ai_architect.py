@@ -144,48 +144,29 @@ Return ONLY valid JSON matching the CardBlueprint schema. No markdown, no code b
                     context_logs_count=len(user_context_logs),
                 )
 
-                # Use unified SDK with JSON schema enforcement
-                # Build contents as a simple string (the SDK will handle conversion)
-                # Note: Using default thinking level for Gemini 3 Flash (usually "Dynamic")
-                # to avoid 400 Bad Request errors until SDK fully supports explicit thinking_config
+                # Use unified SDK with v1.56+ features: native Pydantic support and thinking config
                 response = self._client.models.generate_content(
                     model=self._model_id,
                     contents=user_message,
                     config=types.GenerateContentConfig(
                         system_instruction=self._system_instruction,
+                        # Native Pydantic support in v1.56+
+                        response_schema=CardBlueprint,
                         response_mime_type="application/json",
-                        response_schema=CardBlueprint.model_json_schema()
+                        # Enable Gemini 3.0 "Thinking" (Reasoning)
+                        # "medium" offers the best balance for a game (smarter than low, faster than high)
+                        thinking_config=types.ThinkingConfig(
+                            include_thoughts=False,
+                            thinking_level="medium"
+                        ),
+                        temperature=1.0,
                     )
                 )
 
-                if not response.candidates:
-                    raise ValueError("Empty response from Gemini API")
+                if not response.parsed:
+                    raise ValueError("Gemini 3 failed to return a valid blueprint.")
 
-                # Extract text from response
-                candidate = response.candidates[0]
-                if not hasattr(candidate, "content") or not candidate.content:
-                    raise ValueError("No content in response")
-
-                if not hasattr(candidate.content, "parts") or not candidate.content.parts:
-                    raise ValueError("No parts in content")
-
-                # Get text from parts
-                text_parts = [
-                    part.text for part in candidate.content.parts
-                    if hasattr(part, "text") and part.text
-                ]
-
-                if not text_parts:
-                    raise ValueError("No text in response parts")
-
-                response_text = "".join(text_parts)
-
-                # Try to use parsed response if available, otherwise parse manually
-                if hasattr(response, "parsed") and response.parsed:
-                    blueprint = CardBlueprint.model_validate(response.parsed)
-                else:
-                    # Parse JSON response into CardBlueprint
-                    blueprint = CardBlueprint.model_validate_json(response_text)
+                blueprint = response.parsed
 
                 logger.info(
                     "Card blueprint generated successfully",

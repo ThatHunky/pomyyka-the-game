@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
 
     # Model Constants
-    # Gemini 3.0 Flash (Preview) - High speed + Reasoning
+    # Gemini 3.0 Flash (Preview) - Fast reasoning model with "Thinking" modality
     text_model_id: str = Field(default="gemini-3-flash-preview", alias="TEXT_MODEL_ID")
+    # Gemini 3.0 Pro Image (Preview) - Nano Banana Pro with "Image Generation" modality
     image_model_id: str = Field(
         default="gemini-3-pro-image-preview", alias="IMAGE_MODEL_ID"
     )

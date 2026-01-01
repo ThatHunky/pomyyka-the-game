@@ -13,7 +13,7 @@ globs: *
 ## TECH STACK
 
 *   Python: 3.14
-*   aiogram: 3.x
+*   aiogram: 3.x -> 3.17 (>=3.17,<4.0)
 *   SQLAlchemy: Async
 *   PostgreSQL: 17-alpine
 *   Redis: alpine
@@ -22,12 +22,14 @@ globs: *
 *   asyncpg
 *   alembic
 *   apscheduler
-*   google-genai: >=1.0.0
-*   pydantic: >=2.10
+*   google-genai: >=1.0.0 -> 1.56.0 (Strict versioning)
+*   pydantic: >=2.10 (>=2.10,<3.0)
+*   redis: ^5.2.0 (>=5.2.0,<6.0)
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
 *   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk"), `ADMIN_USER_IDS` (comma-separated list of Telegram user IDs, for admin authentication).
+*   Context: Using the "Gemini 3.0" feature set which requires the 1.56 SDK.
 
 ## CODING STANDARDS
 
@@ -166,6 +168,7 @@ globs: *
     *   Initializes and starts the scheduler on startup.
     *   Handles cleanup on shutdown.
     *   Update `main.py` to register middleware and start cleanup scheduler.
+    *   Ensure the startup sequence wraps the `await bot.delete_webhook()` call in a try/except block. If the bot was previously running on a webhook, this can crash the polling startup.
 
 ## AI SERVICES
 
@@ -186,8 +189,35 @@ globs: *
         *   Method `generate_blueprint(user_context_logs: list[str]) -> CardBlueprint`:
             *   **System Instruction**: Convert the "Gemini Gem" prompt provided earlier into a Python string. Crucially, emphasize the output must be valid JSON matching the `CardBlueprint` schema.
             *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content` and `generation_config={"response_mime_type": "application/json"}`. Sticking to the default thinking level (which is usually "Dynamic" for Flash 3) is safer for now to avoid 400 Bad Request errors.
+            *   **Note**: Using default thinking level for Gemini 3 Flash (usually "Dynamic") to avoid 400 Bad Request errors until SDK fully supports explicit `thinking_config`.
             *   **Parsing**: Use `CardBlueprint.model_validate_json(response.text)` to ensure robust parsing.
             *   **Error Handling**: Catch validation errors and retry once if Gemini hallucinates the schema.
+            *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content`.
+            *   Use unified SDK with v1.56+ features: native Pydantic support and thinking config
+            *   ```python
+                            response = self._client.models.generate_content(
+                                model=self._model_id,
+                                contents=user_message,
+                                config=types.GenerateContentConfig(
+                                    system_instruction=self._system_instruction,
+                                    # Native Pydantic support in v1.56+
+                                    response_schema=CardBlueprint,
+                                    response_mime_type="application/json",
+                                    # Enable Gemini 3.0 "Thinking" (Reasoning)
+                                    # "medium" offers the best balance for a game (smarter than low, faster than high)
+                                    thinking_config=types.ThinkingConfig(
+                                        include_thoughts=False,
+                                        thinking_level="medium"
+                                    ),
+                                    temperature=1.0,
+                                )
+                            )
+
+                            if not response.parsed:
+                                raise ValueError("Gemini 3 failed to return a valid blueprint.")
+
+                            blueprint = response.parsed
+            ```
 *   Create `services/art_forge.py`.
     *   Stack: `google-genai` (for Gemini 3 Pro Image).
     *   **Style Constants**:
@@ -196,7 +226,7 @@ globs: *
         *   Init with `GEMINI_API_KEY` and store pass for `media/cards/` directory.
         *   Method `forge_card_image(blueprint_prompt: str, biome: BiomeType) -> str (filepath)`:
             *   **Combine Prompt**: f"{UNIFORM_STYLE_GUIDE}. Subject: {blueprint_prompt}. Biome theme: {biome.value}."
-            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"], safety_settings=[types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_ONLY_HIGH")])`.
+            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"], safety_settings=[types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_ONLY_HIGH"], aspect_ratio="3:4").
             *   **Save**: Save resulting binary to `media/cards/{uuid4()}.png`.
             *   **Return**: Relative path to the saved image.
             *   **Error Handling**: Handle rate limits with exponential backoff.

@@ -46,3 +46,72 @@ Checking `services/ai_architect.py` for the `GenerateContentConfig` block and en
 
 ---
 
+
+The `GenerateContentConfig` block already sets `response_mime_type="application/json"`. Adding a comment about the thinking level configuration for future reference.
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: services/ai_architect.py</summary>
+
+**Chunk 1**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -147,4 +147,6 @@
+                  # Use unified SDK with JSON schema enforcement
+                  # Build contents as a simple string (the SDK will handle conversion)
++                 # Note: Using default thinking level for Gemini 3 Flash (usually "Dynamic")
++                 # to avoid 400 Bad Request errors until SDK fully supports explicit thinking_config
+                  response = self._client.models.generate_content(
+                      model=self._model_id,
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `services/ai_architect.py`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updated `services/ai_architect.py` with a comment explaining the thinking level configuration. The code already sets `response_mime_type="application/json"` for Gemini 3 Flash JSON responses.
+
+The comment documents that we're using the default thinking level (typically "Dynamic" for Flash 3) to avoid 400 Bad Request errors until the SDK fully supports explicit `thinking_config`. When support is added, you can update the config block accordingly.
+
+The `GenerateContentConfig` block at lines 152-156 now includes this documentation.
+
+---
+

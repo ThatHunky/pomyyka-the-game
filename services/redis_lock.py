@@ -87,6 +87,9 @@ class DropManager:
         if ttl is None:
             ttl = self._default_ttl
 
+        # Ensure ttl is an integer (redis-py 5.2.0 is strict about types)
+        ttl = int(ttl)
+
         key = f"drop:{message_id}"
         script_sha = await self._ensure_script_loaded()
         client = await self._get_redis()
