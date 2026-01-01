@@ -12,7 +12,7 @@ globs: *
 
 ## TECH STACK
 
-*   Python: 3.13 (Note: Originally specified as 3.14, but using 3.13 as 3.14 is not yet released. Update when 3.14 is stable.)
+*   Python: 3.14
 *   aiogram: 3.x
 *   SQLAlchemy: Async
 *   PostgreSQL: 17-alpine
@@ -26,13 +26,13 @@ globs: *
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
-*   `.env.example`: Contains example environment variables: `BOT_TOKEN`, `DB_URL`, `REDIS_URL`, `GEMINI_API_KEY`, `LOCALE` (defaults to "uk").
+*   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk").
 
 ## CODING STANDARDS
 
 *   Use `pydantic-settings` for configuration management.
 *   Output logs in JSON format using `structlog`.
-*   The application must be runnable without the Gemini API key being present (manual adding is acceptable).
+*   The application must be runnable without the Gemini API key being present (manual adding is acceptable). When `GEMINI_API_KEY` is not provided, Gemini-related functionality should be gracefully disabled.
 
 ## WORKFLOW & RELEASE RULES
 
