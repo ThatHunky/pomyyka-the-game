@@ -1,0 +1,40 @@
+
+## HEADERS
+
+## PROJECT RULES
+
+*   Project name: Хроніки Помийки (Chronicles of the Dumpster) - A Ukrainian Telegram Card Game Bot.
+*   Target Locale: Ukrainian ("uk")
+
+## TECH STACK
+
+*   Python: 3.13 (Note: Originally specified as 3.14, but using 3.13 as 3.14 is not yet released. Update when 3.14 is stable.)
+*   aiogram: 3.x
+*   SQLAlchemy: Async
+*   PostgreSQL: 17-alpine
+*   Redis: alpine
+*   Docker Compose
+*   pydantic-settings
+*   asyncpg
+*   alembic
+*   apscheduler
+*   google-genai
+
+## PROJECT DOCUMENTATION & CONTEXT SYSTEM
+
+*   `.env.example`: Contains example environment variables.
+
+## CODING STANDARDS
+
+*   Use `pydantic-settings` for configuration management.
+*   Output logs in JSON format using `structlog`.
+
+## WORKFLOW & RELEASE RULES
+
+## DEBUGGING
+
+## INFRASTRUCTURE
+
+*   Docker Compose should define `bot`, `db` (PostgreSQL), and `redis` services.
+*   Docker container must wait for Postgres and Redis to be healthy before starting the bot.
+*   Use named volumes for `pg_data` and `redis_data` to persist data.
