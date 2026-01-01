@@ -4,7 +4,7 @@ import asyncio
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, TelegramObject, Update
+from aiogram.types import Message, TelegramObject
 
 from database.models import MessageLog
 from database.session import get_session
@@ -51,32 +51,31 @@ class MessageLoggingMiddleware(BaseMiddleware):
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
-        event: Update,
+        event: Message,
         data: dict[str, Any],
     ) -> Any:
         """
-        Process update and log text messages.
+        Process message and log text messages.
 
         Args:
             handler: Next handler in the chain.
-            event: Telegram update event.
+            event: Telegram message event.
             data: Middleware data dictionary.
         """
         # Only process text messages in group chats
-        if event.message and event.message.text and event.message.chat:
-            message: Message = event.message
-            chat = message.chat
+        if event.text and event.chat:
+            chat = event.chat
 
             # Only log group/supergroup chats
-            if chat.type in ("group", "supergroup") and message.from_user:
+            if chat.type in ("group", "supergroup") and event.from_user:
                 # Skip commands (starting with /)
-                if not message.text.startswith("/"):
+                if not event.text.startswith("/"):
                     # Fire-and-forget async task
                     asyncio.create_task(
                         _log_message(
-                            user_id=message.from_user.id,
+                            user_id=event.from_user.id,
                             chat_id=chat.id,
-                            content=message.text,
+                            content=event.text,
                         )
                     )
 

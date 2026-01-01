@@ -76,12 +76,18 @@ globs: *
     *   **Logic**: For every text message in a group chat:
         *   Fire-and-forget an async task to insert the message into `MessageLog`.
     *   **Optimization**: Do *not* log commands (starting with `/`).
+*   **Middleware Event Handling**: When registering middlewares using `dp.message.middleware()`, the `event` parameter is a `Message` object, not an `Update` object.
 
 ## HANDLERS
 
 *   Create `handlers/drops.py` to handle drop claims.
     *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
+        *   **Note**: All handler files (`handlers/drops.py`, `handlers/admin.py`, `handlers/admin_autocard.py`) already use the correct import path: `from aiogram.filters.callback_data import CallbackData`.
     *   **Loop Fix**: In `_award_card_and_update_message`, remove the `finally:` block and move the `break` statement to the end of the `try` block.
+    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Instead, place the `break` statement as the last line inside the `try` block.
+*   Create `handlers/admin.py` to handle admin commands.
+    *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
+    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
 *   Implement a Callback Query Handler for data `claim_drop`.
 *   Call `DropManager.try_claim_drop(message.message_id, user.id)`.
     *   **If Success**:
@@ -89,7 +95,6 @@ globs: *
         *   Edit message text: "✅ **[User]** блискавично схопив [Card Name]!" (Use Ukrainian).
     *   **If Fail**:
         *   Answer callback query with alert: "❌ Хтось виявився спритнішим!" (Alert/Toast).
-*   Create `handlers/admin.py` to handle admin commands.
 *   Implement Admin Card Creation Flow in `handlers/admin.py`.
     *   **FSM**: States `WaitingForName`, `WaitingForArtPrompt`, `WaitingForStats`.
     *   `/newcard` -> Input Name.
@@ -114,7 +119,7 @@ globs: *
             *   Bot edits message: "🧠 Проєктую архітектуру картки..." (Designing card architecture...).
             *   Call `CardArchitectService.generate_blueprint(logs, target_user_id)`. Pass the `target_user_id` to the service.
         5.  **Art Forge Step**:
-            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in nano-forge...).
+            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in nano-горні...).
             *   Call `ArtForgeService.forge_card_image(blueprint.raw_image_prompt_en, blueprint.biome)`.
         6.  **Preview & Confirmation**:
             *   Bot deletes status message.
@@ -124,6 +129,11 @@ globs: *
             *   Save `CardTemplate` to DB.
             *   Create `UserCard` for the target user instantly.
             *   Edit message: "🎉 Картку [Card Name] створено та видано [User]!"
+*   Create `handlers/player.py` to handle player commands.
+    *   Implement `/start` handler that:
+        *   Gets or creates User record using pattern from `handlers/drops.py`.
+        *   Responds with welcome message in Ukrainian.
+        *   Logs the registration event.
 
 ## DATABASE
 
@@ -165,18 +175,20 @@ globs: *
 *   Create `services/cleanup.py` with daily cleanup job.
     *   **Logic**: `DELETE FROM message_logs WHERE created_at < now() - INTERVAL '7 days'`.
     *   This keeps the database lean, only keeping recent context for generation.
+    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
 
 ## MAIN APPLICATION
 
 *   Create `main.py` as application entry point that:
     *   Initializes logging and database.
     *   Creates Bot and Dispatcher instances.
-    *   Registers routers (drops router, admin router, admin_autocard router).
+    *   Registers routers (drops router, admin router, admin_autocard router, player router).
     *   Registers middlewares (ChatTrackingMiddleware, MessageLoggingMiddleware) - order matters.
     *   Initializes and starts the scheduler on startup.
     *   Handles cleanup on shutdown.
     *   Update `main.py` to register middleware and start cleanup scheduler.
     *   Ensure the startup sequence wraps the `await bot.delete_webhook()` call in a try/except block. If the bot was previously running on a webhook, this can crash the polling startup.
+    *   Log admin configuration at startup: Log the number of admins configured and whether admin functionality is enabled.
 
 ## AI SERVICES
 
@@ -215,6 +227,7 @@ globs: *
                                     # "medium" offers the best balance for a game (smarter than low, faster than high)
                                     thinking_config=types.ThinkingConfig(
                                         include_thoughts=False,
+                                        include_thoughts=False,
                                         thinking_level="medium"
                                     ),
                                     temperature=1.0,
@@ -251,3 +264,7 @@ globs: *
         *   Generates a UUID filename.
         *   Saves to disk.
         *   Returns the relative filepath.
+
+## USER INTERFACE
+
+* Implement proper Keyboard Buttons for users in the bot - main menu, cards, inventory - everything.

@@ -49,9 +49,23 @@ def is_admin(user_id: int) -> bool:
 
 async def check_admin(message: Message) -> bool:
     """Check if message sender is admin and respond if not."""
-    if not is_admin(message.from_user.id):
+    user_id = message.from_user.id
+    is_user_admin = is_admin(user_id)
+    
+    if not is_user_admin:
+        logger.warning(
+            "Admin command attempted by non-admin user",
+            user_id=user_id,
+            username=message.from_user.username,
+        )
         await message.answer("❌ У вас немає прав доступу до цієї команди.")
         return False
+    
+    logger.debug(
+        "Admin command authorized",
+        user_id=user_id,
+        username=message.from_user.username,
+    )
     return True
 
 
@@ -289,6 +303,7 @@ async def process_stats(message: Message, state: FSMContext) -> None:
             )
 
             await state.clear()
+            break
 
         except Exception as e:
             logger.error(
@@ -300,3 +315,4 @@ async def process_stats(message: Message, state: FSMContext) -> None:
             await message.answer(
                 f"❌ Помилка при збереженні картки: {str(e)}",
             )
+            break

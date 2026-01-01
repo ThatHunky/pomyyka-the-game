@@ -3,7 +3,7 @@
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Update
+from aiogram.types import Message, TelegramObject
 from sqlalchemy.dialects.postgresql import insert
 
 from database.models import GroupChat
@@ -19,27 +19,19 @@ class ChatTrackingMiddleware(BaseMiddleware):
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
-        event: Update,
+        event: Message,
         data: dict[str, Any],
     ) -> Any:
         """
-        Process update and track group chats.
+        Process message and track group chats.
 
         Args:
             handler: Next handler in the chain.
-            event: Telegram update event.
+            event: Telegram message event.
             data: Middleware data dictionary.
         """
-        # Get chat from update
-        chat = None
-        if event.message:
-            chat = event.message.chat
-        elif event.callback_query and event.callback_query.message:
-            chat = event.callback_query.message.chat
-        elif event.channel_post:
-            chat = event.channel_post.chat
-        elif event.edited_message:
-            chat = event.edited_message.chat
+        # Get chat from message
+        chat = event.chat
 
         # Track group/supergroup chats
         if chat and chat.type in ("group", "supergroup"):

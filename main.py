@@ -11,6 +11,7 @@ from database.session import init_db
 from handlers.admin import router as admin_router
 from handlers.admin_autocard import router as admin_autocard_router
 from handlers.drops import router as drops_router
+from handlers.player import router as player_router
 from logging_config import setup_logging, get_logger
 from middlewares.group_tracker import ChatTrackingMiddleware
 from middlewares.logger import MessageLoggingMiddleware
@@ -26,6 +27,14 @@ async def main() -> None:
     setup_logging()
 
     logger.info("Starting bot application")
+    
+    # Log admin configuration (without exposing IDs for security)
+    admin_count = len(settings.admin_user_ids)
+    logger.info(
+        "Admin configuration loaded",
+        admin_count=admin_count,
+        admin_enabled=settings.is_admin_enabled,
+    )
 
     # Initialize database
     await init_db()
@@ -47,6 +56,7 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(admin_autocard_router)
     dp.include_router(drops_router)
+    dp.include_router(player_router)
     logger.info("Routers registered")
 
     # Initialize and start schedulers
