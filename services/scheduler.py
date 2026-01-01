@@ -90,34 +90,30 @@ class DropScheduler:
         try:
             # Fetch active groups
             async for session in get_session():
-                try:
-                    stmt = select(GroupChat).where(GroupChat.is_active == True)
-                    result = await session.execute(stmt)
-                    active_groups = result.scalars().all()
+                stmt = select(GroupChat).where(GroupChat.is_active == True)
+                result = await session.execute(stmt)
+                active_groups = result.scalars().all()
 
-                    if not active_groups:
-                        logger.debug("No active groups found")
-                        return
+                if not active_groups:
+                    logger.debug("No active groups found")
+                    return
 
-                    # Optionally limit to random subset
-                    groups_to_process = active_groups
-                    if self._max_groups_per_run and len(active_groups) > self._max_groups_per_run:
-                        groups_to_process = random.sample(
-                            active_groups, self._max_groups_per_run
-                        )
-
-                    logger.debug(
-                        "Processing groups for drops",
-                        total_groups=len(active_groups),
-                        processing=len(groups_to_process),
+                # Optionally limit to random subset
+                groups_to_process = active_groups
+                if self._max_groups_per_run and len(active_groups) > self._max_groups_per_run:
+                    groups_to_process = random.sample(
+                        active_groups, self._max_groups_per_run
                     )
 
-                    # Process each group
-                    for group in groups_to_process:
-                        await self._process_group_drop(session, group)
+                logger.debug(
+                    "Processing groups for drops",
+                    total_groups=len(active_groups),
+                    processing=len(groups_to_process),
+                )
 
-                finally:
-                    break
+                # Process each group
+                for group in groups_to_process:
+                    await self._process_group_drop(session, group)
 
         except Exception as e:
             logger.error(

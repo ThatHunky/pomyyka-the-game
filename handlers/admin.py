@@ -300,5 +300,3 @@ async def process_stats(message: Message, state: FSMContext) -> None:
             await message.answer(
                 f"❌ Помилка при збереженні картки: {str(e)}",
             )
-        finally:
-            break

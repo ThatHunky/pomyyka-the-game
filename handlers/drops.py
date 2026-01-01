@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from aiogram import F, Router
-from aiogram.filters import CallbackData
+from aiogram.filters.callback_data import CallbackData
 from aiogram.types import CallbackQuery, User as TelegramUser
 from sqlalchemy import select
 
@@ -225,6 +225,7 @@ async def _award_card_and_update_message(
                 template_id=template_id,
                 card_name=card_template.name,
             )
+            break
 
         except Exception as e:
             logger.error(
@@ -238,5 +239,4 @@ async def _award_card_and_update_message(
             await callback.answer("Помилка при нагородженні карткою", show_alert=True)
             # Release the claim on error
             await drop_manager.release_drop(message_id)
-        finally:
             break

@@ -63,23 +63,20 @@ class CleanupService:
 
         try:
             async for session in get_session():
-                try:
-                    # Calculate cutoff date
-                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
+                # Calculate cutoff date
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
 
-                    # Delete old logs
-                    stmt = delete(MessageLog).where(MessageLog.created_at < cutoff_date)
-                    result = await session.execute(stmt)
-                    # Session will be committed automatically by get_session()
+                # Delete old logs
+                stmt = delete(MessageLog).where(MessageLog.created_at < cutoff_date)
+                result = await session.execute(stmt)
+                # Session will be committed automatically by get_session()
 
-                    deleted_count = result.rowcount
-                    logger.info(
-                        "Message log cleanup completed",
-                        deleted_count=deleted_count,
-                        cutoff_date=cutoff_date.isoformat(),
-                    )
-                finally:
-                    break
+                deleted_count = result.rowcount
+                logger.info(
+                    "Message log cleanup completed",
+                    deleted_count=deleted_count,
+                    cutoff_date=cutoff_date.isoformat(),
+                )
 
         except Exception as e:
             logger.error(

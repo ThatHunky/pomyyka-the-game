@@ -80,6 +80,8 @@ globs: *
 ## HANDLERS
 
 *   Create `handlers/drops.py` to handle drop claims.
+    *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
+    *   **Loop Fix**: In `_award_card_and_update_message`, remove the `finally:` block and move the `break` statement to the end of the `try` block.
 *   Implement a Callback Query Handler for data `claim_drop`.
 *   Call `DropManager.try_claim_drop(message.message_id, user.id)`.
     *   **If Success**:
@@ -135,6 +137,11 @@ globs: *
         *   `chat_id` (BigInt, FK to GroupChat.chat_id)
         *   `content` (Text, store truncated message text up to 500 chars)
         *   `created_at` (DateTime, default now, indexed)
+            *   Use `insert_default=lambda: datetime.now(timezone.utc)` instead of `default_factory` for non-dataclass SQLAlchemy models.
+            *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
+    *   **`UserCard.acquired_at`**:
+        *   Use `insert_default=lambda: datetime.now(timezone.utc)` instead of `default_factory` for non-dataclass SQLAlchemy models.
+        *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
 
 ## SCHEDULER
 

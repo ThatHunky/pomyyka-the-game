@@ -80,7 +80,8 @@ class UserCard(Base):
         nullable=False,
     )
     acquired_at: Mapped[datetime] = mapped_column(
-        default_factory=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True),
+        insert_default=lambda: datetime.now(timezone.utc)
     )
     unique_stats: Mapped[dict] = mapped_column(
         JSONB, nullable=True
@@ -109,6 +110,6 @@ class MessageLog(Base):
     content: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        insert_default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
