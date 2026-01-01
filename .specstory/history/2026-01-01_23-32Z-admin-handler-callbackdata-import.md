@@ -27,3 +27,61 @@ _**Agent (model default, mode Agent)**_
 
 ---
 
+
+Checking `handlers/admin.py` for `CallbackData` imports and fixing if needed.
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/admin.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Checking the `CallbackData` import in `handlers/admin.py`:
+
+
+---
+
+<tool-use data-tool-type="search" data-tool-name="grep">
+<details>
+<summary>Tool use: **grep** • Grep for "CallbackData" in "handlers/admin.py" • 2 matches</summary>
+
+Output mode: content
+
+
+| File | Content | Line |
+|------|------|------|
+| `handlers/admin.py` | `from aiogram.filters.callback_data import CallbackData` | L8 |
+| `handlers/admin.py` | `class BiomeCallback(CallbackData, prefix="biome"):` | L39 |
+
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+The `handlers/admin.py` file already has the correct import.
+
+On line 8, it uses:
+```8:8:handlers/admin.py
+from aiogram.filters.callback_data import CallbackData
+```
+
+This is correct. No changes needed. The file does not import from `aiogram.filters` or the deprecated `aiogram.utils.callback_data`.
+
+---
+
