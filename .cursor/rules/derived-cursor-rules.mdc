@@ -33,6 +33,7 @@ globs: *
 *   Use `pydantic-settings` for configuration management.
 *   Output logs in JSON format using `structlog`.
 *   The application must be runnable without the Gemini API key being present (manual adding is acceptable). When `GEMINI_API_KEY` is not provided, Gemini-related functionality should be gracefully disabled.
+*   When tracking group chats in `middlewares/group_tracker.py`, use PostgreSQL's `INSERT ON CONFLICT DO NOTHING` to prevent errors when the bot joins a group it has already been in.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -43,3 +44,42 @@ globs: *
 *   Docker Compose should define `bot`, `db` (PostgreSQL), and `redis` services.
 *   Docker container must wait for Postgres and Redis to be healthy before starting the bot. This can be achieved through health checks in `docker-compose.yml` and/or retry logic in the Python startup code.
 *   Use named volumes for `pg_data` and `redis_data` to persist data.
+
+## REDIS
+
+*   Utilize `services/redis_lock.py` with a Lua script for atomic operations to prevent race conditions when claiming drops. The Lua script should:
+    *   Atomically check if the drop key exists.
+    *   If it doesn't, set the key to the user ID, set a TTL, and return 1.
+    *   If it does exist, return 0.
+*   Use async Redis (`redis.asyncio`) to match the project's async pattern.
+*   Load the script once and cache it via SHA.
+*   Implement error handling: return `False` on Redis errors to prevent double claims.
+*   Implement `DropManager` class in `services/redis_lock.py` with methods:
+    *   `try_claim_drop(message_id, user_id, ttl)`
+    *   `release_drop()` - manual cleanup
+    *   `get_claim_owner()` - check who claimed a drop
+    *   `close()` - cleanup connection
+
+## MIDDLEWARE
+
+*   Implement `middlewares/group_tracker.py` to track group chats.
+*   Create `ChatTrackingMiddleware` that intercepts every update.
+*   If `chat.type` is `supergroup` or `group`:
+    *   Upsert the `GroupChat` table (INSERT ON CONFLICT DO NOTHING). This ensures we have a list of all groups the bot is in.
+
+## HANDLERS
+
+*   Create `handlers/drops.py` to handle drop claims.
+*   Implement a Callback Query Handler for data `claim_drop`.
+*   Call `DropManager.try_claim_drop(message.message_id, user.id)`.
+    *   **If Success**:
+        *   Award card to user in DB.
+        *   Edit message text: "✅ **[User]** блискавично схопив [Card Name]!" (Use Ukrainian).
+    *   **If Fail**:
+        *   Answer callback query with alert: "❌ Хтось виявився спритнішим!" (Alert/Toast).
+
+## DATABASE
+
+*   Use `database/session.py` for database session management.
+*   Use `AsyncSession` from SQLAlchemy for asynchronous database operations.
+*   Implement `get_session` dependency function to get database session.
