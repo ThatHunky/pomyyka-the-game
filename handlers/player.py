@@ -283,7 +283,7 @@ async def cmd_inventory(message: Message, page: int = 0) -> None:
 
                 inventory_text += (
                     f"{i}. {biome_emoji} **{escape_markdown(template.name)}** {rarity_emoji}\n"
-                    f"   ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}\n\n"
+                    f"   🆔 {user_card.display_id} | ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}\n\n"
                 )
 
             keyboard = get_inventory_keyboard(cards, page, total_pages, CARDS_PER_PAGE)
@@ -642,7 +642,7 @@ async def _show_inventory(callback: CallbackQuery, page: int) -> None:
 
                 inventory_text += (
                     f"{i}. {biome_emoji} **{escape_markdown(template.name)}** {rarity_emoji}\n"
-                    f"   ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}\n\n"
+                    f"   🆔 {user_card.display_id} | ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}\n\n"
                 )
 
             keyboard = get_inventory_keyboard(cards, page, total_pages, CARDS_PER_PAGE)
@@ -707,12 +707,100 @@ async def handle_card_view(
             rarity_emoji = get_rarity_emoji(template.rarity)
 
             card_text = f"{biome_emoji} **{escape_markdown(template.name)}**\n\n"
+            card_text += f"🆔 **ID:** {user_card.display_id}\n"
             card_text += f"{biome_emoji} **Біом:** {escape_markdown(template.biome_affinity.value)}\n"
             card_text += f"⚔️ **АТАКА:** {stats.get('atk', 0)}\n"
             card_text += f"🛡️ **ЗАХИСТ:** {stats.get('def', 0)}\n"
             if 'meme' in stats:
                 card_text += f"🎭 **МЕМНІСТЬ:** {stats.get('meme', 0)}\n"
-            card_text += f"{rarity_emoji} **Рідкість:** {escape_markdown(template.rarity.value)}\n"
+            card_text += f"{rarity_emoji} **Рідкість:** {escape_markdown(template.rarity.value)}\n\n"
+            
+            # Display attacks if available
+            attacks = template.attacks or []
+            if attacks:
+                card_text += "**⚔️ Атаки:**\n"
+                for i, attack in enumerate(attacks, 1):
+                    attack_name = attack.get("name", "Атака")
+                    attack_type = attack.get("type", "PHYSICAL")
+                    damage = attack.get("damage", 0)
+                    energy_cost = attack.get("energy_cost", 1)
+                    effect = attack.get("effect", "")
+                    status_effect = attack.get("status_effect", "NONE")
+                    
+                    # Get attack type emoji
+                    from database.enums import AttackType, StatusEffect
+                    type_emoji_map = {
+                        AttackType.FIRE: "🔥",
+                        AttackType.WATER: "💧",
+                        AttackType.GRASS: "🌿",
+                        AttackType.PSYCHIC: "🔮",
+                        AttackType.TECHNO: "⚙️",
+                        AttackType.DARK: "🌑",
+                        AttackType.MEME: "🎭",
+                        AttackType.PHYSICAL: "⚔️",
+                    }
+                    type_emoji = type_emoji_map.get(AttackType(attack_type), "⚔️")
+                    
+                    card_text += f"{i}. {type_emoji} **{escape_markdown(attack_name)}**\n"
+                    card_text += f"   💥 Шкода: {damage} | ⚡ Енергія: {energy_cost}\n"
+                    if effect:
+                        card_text += f"   📝 {escape_markdown(effect)}\n"
+                    if status_effect and status_effect != "NONE":
+                        status_emoji_map = {
+                            StatusEffect.BURNED: "🔥",
+                            StatusEffect.POISONED: "☠️",
+                            StatusEffect.PARALYZED: "⚡",
+                            StatusEffect.CONFUSED: "🌀",
+                            StatusEffect.ASLEEP: "😴",
+                            StatusEffect.FROZEN: "❄️",
+                        }
+                        status_emoji = status_emoji_map.get(StatusEffect(status_effect), "🔮")
+                        card_text += f"   {status_emoji} Статус: {StatusEffect(status_effect).value}\n"
+                    card_text += "\n"
+            else:
+                # Fallback: show basic attack using ATK stat
+                card_text += "**⚔️ Атака:** Базова атака (використовує ATK)\n\n"
+            
+            # Display weakness if available
+            if template.weakness:
+                weak_type = AttackType(template.weakness.get("type", ""))
+                multiplier = template.weakness.get("multiplier", 2.0)
+                type_emoji_map = {
+                    AttackType.FIRE: "🔥",
+                    AttackType.WATER: "💧",
+                    AttackType.GRASS: "🌿",
+                    AttackType.PSYCHIC: "🔮",
+                    AttackType.TECHNO: "⚙️",
+                    AttackType.DARK: "🌑",
+                    AttackType.MEME: "🎭",
+                    AttackType.PHYSICAL: "⚔️",
+                }
+                type_emoji = type_emoji_map.get(weak_type, "⚔️")
+                card_text += f"⚠️ **Слабкість:** {type_emoji} {weak_type.value} (x{multiplier})\n"
+            
+            # Display resistance if available
+            if template.resistance:
+                resist_type = AttackType(template.resistance.get("type", ""))
+                reduction = template.resistance.get("reduction", 0)
+                type_emoji_map = {
+                    AttackType.FIRE: "🔥",
+                    AttackType.WATER: "💧",
+                    AttackType.GRASS: "🌿",
+                    AttackType.PSYCHIC: "🔮",
+                    AttackType.TECHNO: "⚙️",
+                    AttackType.DARK: "🌑",
+                    AttackType.MEME: "🎭",
+                    AttackType.PHYSICAL: "⚔️",
+                }
+                type_emoji = type_emoji_map.get(resist_type, "⚔️")
+                if reduction > 0:
+                    card_text += f"🛡️ **Стійкість:** {type_emoji} {resist_type.value} (-{reduction} шкоди)\n"
+                else:
+                    card_text += f"🛡️ **Стійкість:** {type_emoji} {resist_type.value} (x0.5)\n"
+            
+            # Display print_date at bottom (like Pokemon TCG cards)
+            if template.print_date:
+                card_text += f"\n\n📅 {template.print_date}"
 
             keyboard = get_card_detail_keyboard(
                 card_id=str(user_card.id), return_page=callback_data.return_page
@@ -722,13 +810,46 @@ async def handle_card_view(
             if template.image_url:
                 try:
                     from pathlib import Path
+                    from database.enums import Rarity
 
                     image_path = Path(template.image_url)
+                    is_rare = template.rarity in (Rarity.EPIC, Rarity.LEGENDARY, Rarity.MYTHIC)
+                    
+                    await callback.message.delete()
+                    
+                    if is_rare:
+                        # For rare cards, try animated MP4 first (sent as animation/GIF), then GIF fallback
+                        animated_mp4_path = image_path.parent / f"{image_path.stem}_animated.mp4"
+                        animated_gif_path = image_path.parent / f"{image_path.stem}_animated.gif"
+                        
+                        if animated_mp4_path.exists():
+                            # Use answer_animation with MP4 - Telegram displays it as GIF
+                            animation_file = FSInputFile(str(animated_mp4_path))
+                            await callback.message.answer_animation(
+                                animation=animation_file,
+                                caption=card_text,
+                                parse_mode="Markdown",
+                                reply_markup=keyboard,
+                            )
+                            await callback.answer()
+                            break
+                        elif animated_gif_path.exists():
+                            # Fallback to GIF if MP4 doesn't exist
+                            animation_file = FSInputFile(str(animated_gif_path))
+                            await callback.message.answer_animation(
+                                animation=animation_file,
+                                caption=card_text,
+                                parse_mode="Markdown",
+                                reply_markup=keyboard,
+                            )
+                            await callback.answer()
+                            break
+                    
+                    # Fallback to regular photo (for Common/Rare or if animated doesn't exist)
                     if image_path.exists():
-                        photo = FSInputFile(str(image_path))
-                        await callback.message.delete()
+                        photo_file = FSInputFile(str(image_path))
                         await callback.message.answer_photo(
-                            photo=photo,
+                            photo=photo_file,
                             caption=card_text,
                             parse_mode="Markdown",
                             reply_markup=keyboard,

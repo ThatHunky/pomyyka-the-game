@@ -25,6 +25,8 @@ globs: *
 *   google-genai: >=1.0.0 -> 1.56.0 (Strict versioning)
 *   pydantic: >=2.10 (>=2.10,<3.0)
 *   redis: ^5.2.0 (>=5.2.0,<6.0)
+*   Pillow >=10.0.0
+*   imageio[ffmpeg] >=2.31.0 (For MP4 encoding) OR opencv-python>=4.8.0 (Alternative video encoding option) Requires ffmpeg binary to be installed on the system.
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
@@ -40,6 +42,52 @@ globs: *
     ```
     *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
 *   The contents of the chat export folder (specifically *.json and *.txt files) must be added to `.gitignore`.
+*   Card Placeholder Specification: `CARD_PLACEHOLDER_SPEC.md` - Defines the layout, data fields, and visual style for generating a placeholder card image resembling Pokemon TCG cards, used for generative editing.
+    *   The specification includes the following fields: Card Name, Rarity Indicator, Biome Type, Artwork Area, Attack Stat (ATK), Defense Stat (DEF), Meme Stat, Lore/Flavor Text.
+    *   **Rarity Indicators**:
+        *   Common (⚪)
+        *   Rare (🔵)
+        *   Epic (🟣)
+        *   Legendary (🟠)
+        *   Mythic (🔴)
+    *   **Biome Types**:
+        *   Звичайний (🌍)
+        *   Вогняний (🔥)
+        *   Водний (💧)
+        *   Трав'яний (🌿)
+        *   Психічний (🔮)
+        *   Техно (⚙️)
+        *   Темний (🌑)
+*   Card Placeholder Files: Empty `.png` files (with transparent backgrounds) for different card types (biome/rarity/type) are located in dedicated folders. These placeholders will be replaced with generated content.
+    *   Placeholders should be named with the format: `assets/placeholders/{biome}_{rarity}.png`.
+    *   Both PNG and WebP versions are now available in `assets/placeholders/`. The `nano_banana.py` service currently uses PNG files, so you may want to update it to use WebP for production.
+*   AI Studio Prompts: `PROMPTS_FOR_AI_STUDIO.md` - Contains JSON prompts for generating card template placeholders using Gemini / Imagen 3 in AI Studio.
+    *   The file contains JSON prompts for generating card template placeholders using Gemini / Imagen 3 in AI Studio.
+    *   To use the prompts:
+        1.  Copy the `prompt` text for the specific card template you want to generate.
+        2.  Go to [Google AI Studio](https://aistudio.google.com/).
+        3.  Select the **Imagen 3** model (or latest image generation model).
+        4.  Paste the prompt into the prompt box.
+        5.  Set aspect ratio to **Portrait** (3:4) or similar vertical ratio.
+        6.  Generate the image.
+        7.  Save the image as the corresponding `filename` in `assets/placeholders/`.
+    *   The prompts now include the following EXACT layout and text labels:
+        *   Biome indicators: `🌍 Звичайний`, `🔥 Вогняний`, `💧 Водний`, `🌿 Трав'яний`, `🔮 Психічний`, `⚙️ Техно`, `🌑 Темний`
+        *   Rarity indicators: `⚪ COMMON`, `🔵 RARE`, `🟣 EPIC`, `🟠 LEGENDARY`, `🔴 MYTHIC`
+        *   Card name placeholder: `"НАЗВА КАРТКИ"`
+        *   Lore text: `"Це описова частина картки. Вона містить лор та історію персонажа."`
+        *   Stats with emojis: `⚔️ ATK: 50`, `🎭 MEME: 50`, `🛡️ DEF: 50`
+    *   Each card template includes the following sections (Pokemon TCG style):
+        1.  **Header**: Biome indicator (top left), Card name (top center), Rarity indicator (top right)
+        2.  **Artwork Area**: Large center section for character/creature illustration
+        3.  **Attacks Section**: 1-2 attacks with energy cost, damage, and effect descriptions
+            *   Common cards: 1 attack
+            *   Rare+ cards: 2 attacks
+            *   Format: Attack name [energy icons] damage
+            *   Effect text below each attack in small italic font
+        4.  **Lore**: Flavor text in Ukrainian (small italic font)
+        5.  **Stats**: ATK (left), MEME (center), DEF (right)
+        6.  **Footer**: Weakness (bottom left), Resistance (bottom right), Print date (bottom center)
 
 ## CODING STANDARDS
 
@@ -57,11 +105,50 @@ globs: *
     *   Single `int` values (e.g., `392817811`)
 *   Admin access must be available via username or userID.
 *   When using `CallbackData.pack()`, be aware that it uses colons (`:`) as field separators. To avoid `ValueError: Separator symbol ':' can not be used in value` due to Telegram's 64-byte limit on callback data, store the relevant data in Redis using the `SessionManager` and pass only the UUID in the callback.
+*   Card Art Style:
+    *   The card art style should resemble Pokemon TCG cards, not "cyberpunk trash."
+*   Card Generation:
+    *   Card generation will use Image Integration Strategy: Option A (AI-driven). The "Nano Banana Pro" (Gemini 3 Pro) model accepts the placeholder and user photo as inputs to generate the final card image directly.
+    *   `CardGeneratorService` (formerly `NanoBananaService`) will use group chat photo/user photo (if available) to generate card illustrations.
+    *   `CardGeneratorService` should generate appropriate gradient accents for cards.
+    *   `CardGeneratorService` must integrate the photo into the card design.
+    *   The bot should send 200 random messages from that user (either from imported messages data or group chat messages), filtered to be at least 20 characters long, to the AI architect to inform card design.
+    *   When fetching 200 random messages, mix imported `result.json` data and `MessageLog` (DB) if both are available.
+*   Getting Group Chat Icon:
+    *   Use `bot.get_chat(chat_id)` to get chat object.
+    *   Access the `photo` field of the chat object.
+    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
+*   Getting User Profile Picture:
+    *   Use `bot.get_user_profile_photos(user_id=user_id, limit=1)` to get the most recent profile picture.
+    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
+    *   This works even if the user isn't registered, as long as the bot has access to them and they have a profile picture set.
+*   Unique Card IDs:
+    *   Each `UserCard` instance must have a unique, short, human-readable ID (`display_id`).
+    *   The `display_id` should have the format "POM-XXXX" where XXXX is a 4-character alphanumeric code.
+    *   Characters to use for display IDs: `ABCDEFGHJKLMNPQRSTUVWXYZ2346789` (avoiding confusing characters like 0/O, 1/I, 5/S).
+*   Card Border Effects:
+    *   Cards should have decorative borders based on rarity.
+        *   COMMON - Simple light gray border
+        *   RARE - Double blue border
+        *   EPIC - Ornate purple border with glow and decorative elements
+        *   LEGENDARY - Ornate gold/orange border with glow and corner decorations
+        *   MYTHIC - Ornate red border with glow and decorative elements
+    *   Rounded corners should be applied.
+*   Cards are sent as normal images, and animated ones as GIFs (`.mp4`s in Telegram)
+    *   For animated cards, use the animated WebP versions
+    *   Cards are sent as normal images, and animated ones as GIFs (`.mp4`s in Telegram)
+    *   Animated cards (Epic, Legendary, Mythic) should have holographic/glowing effects.
+    *   When sending cards:
+        *   Common/Rare cards: Send as photos
+        *   Epic/Legendary/Mythic cards: Send as MP4 videos (if available) or GIFs (if MP4 unavailable), using `answer_animation` to ensure they play inline like GIFs.
 
 ## WORKFLOW & RELEASE RULES
 
 *   Bot should primarily edit messages instead of sending new ones to reduce spam.
 *   If running the bot in Docker, restart the container after changing environment variables for the changes to take effect. Use `docker-compose restart bot` or `docker-compose up -d --build bot`.
+*   Since `display_id` is a new required field, you'll need to:
+    1.  Run a database migration to add the column.
+    2.  Populate display IDs for any existing cards in the database.
 
 ## DEBUGGING
 
@@ -71,7 +158,11 @@ globs: *
     *   Check the logs at startup to verify what admin IDs were loaded.
     *   When attempting the command, check the logs to see what user ID is being checked and what admin IDs are configured.
 *   If the callback data exceeds Telegram's 64-byte limit, store the data in Redis using the `SessionManager` and pass only the UUID in the callback.
-*   When editing the photo message caption in `handlers/admin_autocard.py` with `edit_text`, ensure that the `chat_id` and `message_id` are correctly passed and that the caption is properly formatted and escaped. The handlers `handle_autocard_cancel` and `handle_autocard_approve` should be reviewed for potential issues.
+*   When editing the photo message caption in `handlers/admin_autocard.py` with `edit_text`, ensure that the `chat_id` and `message_id` are correctly passed and that the caption is properly formatted and escaped. The handlers `handle_autocard_cancel` and `handle_autocard_approve` should be reviewed for potential issues. Specifically:
+    *   Ensure that the code checks if the message is a photo (`callback.message.photo`).
+    *   Use `edit_caption()` for photo messages.
+    *   Use `edit_text()` for text messages.
+    *   Ensure all user provided text is escaped using `escape_markdown()`.
 
 ## INFRASTRUCTURE
 
@@ -102,7 +193,7 @@ globs: *
     *   `close()` - cleanup connection
 *   Implement `services/session_manager.py` to manage trade and battle sessions.
 *   The `SessionManager` should also include methods for storing and retrieving blueprint data for autocard flows, using UUIDs as keys. These methods are:
-    *   `store_blueprint(blueprint_data: dict, ttl: int = 3600) -> str`: Stores blueprint data in Redis for autocard callbacks.
+    *   `store_blueprint(blueprint(blueprint_data: dict, ttl: int = 3600) -> str`: Stores blueprint data in Redis for autocard callbacks.
     *   `get_blueprint(blueprint_id: str) -> Optional[dict]`: Gets blueprint data from Redis.
     *   `delete_blueprint(blueprint_id: str) -> bool`: Deletes blueprint data from Redis.
 
@@ -154,7 +245,7 @@ globs: *
     *   Input Prompt -> Gen Art -> Review.
     *   Input Stats -> Save.
     *   **Nano Banana Integration**:
-        *   Use `NanoBananaService` to generate art.
+        *   Use `NanoBananaService` (now `CardGeneratorService`) to generate art.
         *   Prompt: "Trading card art, [User Prompt], style of [Biome Style]".
         *   The `generate_card_image()` function in `handlers/admin.py` generates card image using Nano Banana Pro (Gemini 3 Pro Image).
         *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return a relative filepath to saved image.
@@ -192,6 +283,11 @@ globs: *
         *   `/autocard @username` - Use username
         *   `/autocard 392817811` - Use userID
     *   Due to Telegram's 64-byte limit on callback data, store the blueprint data in Redis using the `SessionManager` and pass only the UUID in the callback.
+    *   When handling the Approve & Issue or Cancel buttons:
+        *   Check if the message is a photo (`callback.message.photo`).
+        *   Use `edit_caption()` for photo messages.
+        *   Use `edit_text()` for text messages.
+        *   Ensure all user provided text is escaped using `escape_markdown()`.
 *   Create `handlers/player.py` to handle player commands.
     *   Implement `/start` handler that:
         *   Gets or creates User record using pattern from `handlers/drops.py`.
@@ -226,6 +322,9 @@ globs: *
         *   Implement `get_main_menu_inline_keyboard()` in `utils/keyboards.py` to return an `InlineKeyboardMarkup` with the main menu options.
         *   Update `handle_menu_navigation` in `handlers/player.py` to use `get_main_menu_inline_keyboard()`.
         *   Implement callback query handlers for all navigation actions ("profile", "inventory", "stats", "help").
+    *   The inventory list and card detail view should display the card's `display_id`.
+        *   Inventory list: `🆔 POM-A1B2 | ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}`
+        *   Card detail view: `🆔 **ID:** {user_card.display_id}`
 *   Create `handlers/inline.py` to handle inline queries for player interactions (trading, battles, etc.).
     *   `handle_inline_query()` - main menu on `@botname` call:
         *   Trading
@@ -251,6 +350,35 @@ globs: *
     *   **Usage**: `/createcommoncard <detailed prompt>` (optionally with rarity hint)
         *   Example: `/createcommoncard Шлюхобот - вульгарний мемний робот з техно біому, низька рідкість`
     *   The AI architect service already supports all rarities in its system prompt
+*   Implement the admin command `/test_normals` to send all NORMAL card templates as a test.
+    *   Admin-only: checks admin status before executing.
+    *   Sends all NORMAL cards: Common, Rare, Epic, Legendary, Mythic.
+    *   Uses animated versions when available: Epic, Legendary, Mythic use `*_animated.gif` if present.
+    *   Sends as photos or GIFs: displays normal cards as photos, and animated ones as GIFs.
+    *   Rate limiting: 0.5s delay between sends to avoid Telegram rate limits.
+    *   Status messages: shows progress and final count.
+    *   **Usage**: `/test_normals`
+    *   **What it does**: Finds all NORMAL card templates in `assets/placeholders/`, prioritizes animated versions for Epic, Legendary, Mythic, sends each card as a document with a caption showing rarity, and reports how many cards were sent.
+*   Create animated WebP files for rarer cards with holographic/glowing effects.
+*   **Getting Group Chat Icon**:
+    *   Use `bot.get_chat(chat_id)` to get chat object.
+    *   Access the `photo` field of the chat object.
+    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
+*   **Getting User Profile Picture**:
+    *   Use `bot.get_user_profile_photos(user_id=user_id, limit=1)` to get the most recent profile picture.
+    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
+    *   This works even if the user isn't registered, as long as the bot has access to them and they have a profile picture set.
+*   Cards are sent as photos via `answer_photo`, not stickers.
+*   Cards are sent as photos via `answer_photo`, not stickers. To make them appear larger, we can:
+    1.  Use `answer_document` instead of `answer_photo` (shows larger)
+    2.  Ensure images are sent at full resolution
+*   Cards are sent as photos via `answer_photo`, not stickers. To make them appear larger, we can:
+    1.  Use `answer_document` instead of `answer_photo` (shows larger)
+    2.  Ensure images are sent at full resolution
+*   Updating the code to send cards larger. For rarer cards (Epic, Legendary, Mythic), sending as documents (larger display) and using animated versions when available:
+*   Updating the code to send cards larger. For rarer cards (Epic, Legendary, Mythic), sending as documents (larger display) and using animated versions when available:
+*   Updating the code to send all cards (including Common and Rare) as documents so they display larger:
+*   Updating the code so all cards (Common, Rare, Epic, Legendary, Mythic) are sent as documents, which displays them larger in Telegram chats.
 
 ## DATABASE
 
@@ -269,6 +397,9 @@ globs: *
     *   **`UserCard.acquired_at`**:
         *   Use `insert_default=lambda: datetime.now(timezone.utc)` instead of `default_factory` for non-dataclass SQLAlchemy models.
         *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
+        *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
+    *   **`UserCard.display_id`**:
+        *   `display_id`: Short human-readable unique ID (e.g., "POM-A1B2"). String(10), nullable=False, unique=True, index=True.
 
 ## SCHEDULER
 
@@ -276,165 +407,4 @@ globs: *
     *   Create `DropScheduler` class using APScheduler's `AsyncIOScheduler`.
     *   Job `trigger_random_drops` runs every X minutes (default: 10, configurable).
     *   Fetches active groups from the database.
-    *   For each group (or a random subset):
-        *   Roll RNG with configurable chance (default: 5%).
-        *   On success:
-            *   Calculates biome using `get_chat_biome(chat_id)`.
-            *   Selects a random `CardTemplate` where `biome_affinity == biome`.
-            *   Sends a message with the specified text and an inline "✋ Хапнути" button.
-            *   Uses `ClaimDropCallback` with the template ID.
-*   Scheduler is configured with:
-    *   Interval: 10 minutes (configurable via constructor).
-    *   Drop chance: 5% per group (configurable via constructor).
-    *   Optional max groups per run limit.
-*   The scheduler starts automatically when the bot starts and stops gracefully on shutdown.
-*   Integration: Start the scheduler in `main.py` on startup.
-*   Create `services/cleanup.py` with daily cleanup job.
-    *   **Logic**: `DELETE FROM message_logs WHERE created_at < now() - INTERVAL '7 days'`.
-    *   This keeps the database lean, only keeping recent context for generation.
-    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`s natural termination if it yields only once.
-
-## MAIN APPLICATION
-
-*   Create `main.py` as application entry point that:
-    *   Initializes logging and database.
-    *   Creates Bot and Dispatcher instances.
-    *   Registers routers (drops router, admin router, admin_autocard router, player router, inline router).
-    *   Registers middlewares (ChatTrackingMiddleware, MessageLoggingMiddleware) - order matters.
-    *   Initializes and starts the scheduler on startup.
-    *   Handles cleanup on shutdown.
-    *   Update `main.py` to register middleware and start cleanup scheduler.
-    *   Ensure the startup sequence wraps the `await bot.delete_webhook()` call in a try/except block. If the bot was previously running on a webhook, this can crash the polling startup.
-    *   Log admin configuration at startup: Log the number of admins configured and whether admin functionality is enabled.
-    *   Register `UserRegistrationMiddleware` for both `message` and `callback_query` events to ensure users are automatically registered on any interaction.
-    *   Implements command hints (descriptions) for all bot commands.
-        *   Regular users will see hints for player commands only.
-        *   Admins will see hints for both player and admin commands.
-        *   Uses `utils/commands.py` to centralize command definitions
-        *   Uses `Bot.set_my_commands()` from aiogram for setting commands
-        *   Uses `BotCommandScopeDefault()` for default (all users) scope
-        *   Uses `BotCommandScopeChat(chat_id=user_id)` for per-user scope
-        *   Sets admin commands asynchronously after bot initialization
-        *   Handles errors gracefully (log but don't fail startup)
-
-## AI SERVICES
-
-*   Create `services/ai_architect.py`.
-    *   Stack: `google-genai`, `pydantic`.
-    *   **Define Pydantic Model (`CardBlueprint`)**:
-        *   `target_user_id`: int
-        *   `card_name_ua`: str
-        *   `rarity`: Rarity Enum (Common, Rare, etc.)
-        *   `biome`: BiomeType Enum (Techno, Fire, etc.)
-        *   `stats_atk`: int (0-100)
-        *   `stats_def`: int (0-100)
-        *   `stats_meme`: int (0-100)
-        *   `lore_ua`: str (2 sentences max)
-        *   `raw_image_prompt_en`: str (Descriptive prompt for visual elements only)
-    *   **Class `CardArchitectService`**:
-        *   Init with `GEMINI_API_KEY`.
-        *   Method `generate_blueprint(user_context_logs: list[str], target_user_id: Optional[int] = None, user_name: Optional[str] = None) -> CardBlueprint`:
-            *   **System Instruction**: Convert the "Gemini Gem" prompt provided earlier into a Python string. Crucially, emphasize the output must be valid JSON matching the `CardBlueprint` schema.
-            *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content` and `generation_config={"response_mime_type": "application/json"}`. Sticking to the default thinking level (which is usually "Dynamic" for Flash 3) is safer for now to avoid 400 Bad Request errors.
-            *   **Note**: Using default thinking level for Gemini 3 Flash (usually "Dynamic") to avoid 400 Bad Request errors until SDK fully supports explicit `thinking_config`.
-            *   **Parsing**: Use `CardBlueprint.model_validate_json(response.text)` to ensure robust parsing.
-            *   **Error Handling**: Catch validation errors and retry once if Gemini hallucinates the schema.
-            *   ```python
-                            response = self._client.models.generate_content(
-                                model=self._model_id,
-                                contents=user_message,
-                                config=types.GenerateContentConfig(
-                                    system_instruction=self._system_instruction,
-                                    # Native Pydantic support in v1.56+
-                                    response_schema=CardBlueprint,
-                                    response_mime_type="application/json",
-                                    # Enable Gemini 3.0 "Thinking" (Reasoning)
-                                    # "medium" offers the best balance for a game (smarter than low, faster than high)
-                                    thinking_config=types.ThinkingConfig(
-                                        include_thoughts=False,
-                                        include_thoughts=False,
-                                        thinking_level="medium"
-                                    ),
-                                    temperature=1.0,
-                                )
-                            )
-
-                            if not response.parsed:
-                                raise ValueError("Gemini 3 failed to return a valid blueprint.")
-
-                            blueprint = response.parsed
-            ```
-*   Create `services/art_forge.py`.
-    *   Stack: `google-genai` (for Gemini 3 Pro Image).
-    *   **Style Constants**:
-        *   Define a constant string `UNIFORM_STYLE_GUIDE`: "Trading card illustration, cohesive high fantasy cyberpunk fusion art style, ornate border design elements, digital painting, masterpiece, highly detailed, 8k resolution, cinematic lighting, rich textures."
-    *   **Class `ArtForgeService`**:
-        *   Init with `GEMINI_API_KEY` and store pass for `media/cards/` directory.
-        *   Method `forge_card_image(blueprint_prompt: str, biome: BiomeType) -> str (filepath)`:
-            *   **Combine Prompt**: f"{UNIFORM_STYLE_GUIDE}. Subject: {blueprint_prompt}. Biome theme: {biome.value}."
-            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(imageConfig=types.ImageConfig(aspectRatio="3:4",imageSize="2K",),safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_HARASSMENT",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT",threshold="BLOCK_ONLY_HIGH")]).
-            *   **Save**: Save resulting binary to `media/cards/{uuid4()}.png`.
-            *   **Return**: Relative path to the saved image.
-            *   **Error Handling**: Handle rate limits with exponential backoff.
-            *   **Safety Settings**: Allows mild vulgar/meme content while blocking extreme NSFW content.
-                *   All safety categories (`HARM_CATEGORY_HATE_SPEECH`, `HARM_CATEGORY_HARASSMENT`, `HARM_CATEGORY_SEXUALLY_EXPLICIT`, `HARM_CATEGORY_DANGEROUS_CONTENT`) are set to `BLOCK_ONLY_HIGH`.
-    *   **Note**: The `aspect_ratio` parameter is not supported in the current Gemini SDK version and the model will generate an appropriate aspect ratio automatically.
-*   Create `services/nano_banana.py`.
-    *   Inherits from `ArtForgeService` to maintain style consistency.
-    *   Provides `generate_from_prompt()` method for manual flows.
-    *   Uses the same underlying generation logic as `ArtForgeService`.
-*   Create `services/battle_engine.py` with battle calculation logic (stats, biome bonuses, RNG, MEME crits)
-*   Create `services/chat_import.py` to import chat history from Telegram JSON exports.
-
-## UTILS
-
-*   Create `utils/images.py` helper for image saving
-    *   Function `save_generated_image(image_bytes: bytes, directory: str = "media/cards") -> str`:
-        *   Decodes bytes if needed.
-        *   Generates a UUID filename.
-        *   Saves to disk.
-        *   Returns the relative filepath.
-*   Create `utils/keyboards.py` for keyboard creation.
-    *   `get_main_menu_keyboard()` - Reply keyboard with main menu options
-    *   `get_main_menu_inline_keyboard()` - Inline keyboard for main menu options
-    *   `get_inventory_keyboard()` - Inline keyboard for inventory with pagination
-    *   `get_card_detail_keyboard()` - Inline keyboard for viewing individual cards
-    *   `get_profile_keyboard()` - Inline keyboard for profile/stats
-    *   `get_help_keyboard()` - Inline keyboard for help/guide
-    *   Callback data classes for all interactions (pagination, card viewing, navigation)
-    *   `ScrapCardCallback` - Callback data for scrapping (deleting) cards.
-        *   `card_id` (str): UUID as string
-        *   `return_page` (int): Page to return to in inventory
-        *   `confirm` (bool): Whether this is a confirmation step
-*   Create `utils/text.py` with `escape_markdown()` to escape special characters in user-provided content.
-*   Create `utils/emojis.py` with:
-    *   `get_biome_emoji(biome: BiomeType)`
-    *   `get_rarity_emoji(rarity: Rarity)`
-*   Create `utils/commands.py` with command definitions and helper functions
-    *   `get_player_commands()` - Returns a list of player commands with Ukrainian descriptions
-    *   `get_admin_commands()` - Returns a list of admin commands with Ukrainian descriptions
-    *   `get_all_commands()` - Returns a list of all commands (player + admin) with Ukrainian descriptions
-    *   `is_admin(user_id: int)` - Checks if a user ID is in the list of admin user IDs.
-
-## USER INTERFACE
-
-*   Implement a full keyboard system with:
-    *   Reply Keyboards (persistent buttons): Main menu navigation
-    *   Inline Keyboards: Inventory browsing, card details, and actions
-*   Reply Keyboards (persistent buttons): Main menu navigation
-*   Inline Keyboards: Inventory browsing, card details, and actions
-*   Menu Structure:
-    *   Main Menu (Reply Keyboard)
-        *   📊 Профіль (Profile)
-        *   🎴 Колекція (Inventory)
-        *   ❓ Допомога (Help)
-    *   Profile View (Inline Keyboard)
-        *   🔙 Назад (Back to Main Menu)
-    *   Inventory View (Inline Keyboard)
-        *   Navigation: ⬅️ Попередня / Наступна ➡️
-        *   Filter/Sort options (if applicable)
-        *   🔙 Назад (Back to Main Menu)
-    *   Card Detail View (Inline Keyboard)
-        *   Navigation: ⬅️ Попередня / Наступна ➡️
-        *   🔙 До Колекції (Back to Inventory)
-        *   🔩 Розпилити (Отримати Ре
+    *   For each group (or a

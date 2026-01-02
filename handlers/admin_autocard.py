@@ -22,9 +22,9 @@ from database.models import CardTemplate, MessageLog, User, UserCard
 from database.session import get_session
 from handlers.admin import check_admin
 from logging_config import get_logger
-from services.art_forge import ArtForgeService
-from services.card_architect import CardArchitectService, CardBlueprint
+from services.nano_banana import NanoBananaService
 from services.session_manager import SessionManager
+from utils.card_ids import generate_unique_display_id
 from utils.text import escape_markdown
 
 logger = get_logger(__name__)
@@ -342,97 +342,26 @@ async def cmd_autocard(message: Message, bot: Bot) -> None:
     status_msg = await message.answer(f"🕵️‍♂️ Аналізую особистість {escaped_display}...")
 
     try:
-        # Fetch messages from MessageLog (chronological order for better context)
-        async for session in get_session():
-            try:
-                stmt = (
-                    select(MessageLog.content, MessageLog.created_at)
-                    .where(MessageLog.user_id == target_user_id)
-                    .where(MessageLog.content.isnot(None))  # Exclude empty messages
-                    .where(MessageLog.content != "")  # Exclude empty strings
-                    .order_by(MessageLog.created_at.asc())  # Oldest first for chronological context
-                    .limit(100)  # Increased to 100 for better context
-                )
-                result = await session.execute(stmt)
-                message_rows = result.all()
+        # Get chat ID from message
+        chat_id = message.chat.id if message.chat else target_user_id
 
-                if not message_rows:
-                    await status_msg.edit_text(
-                        f"❌ Не знайдено повідомлень для користувача {escaped_display}."
-                    )
-                    return
-
-                # Format messages with better structure for AI context
-                # Filter out very short messages, single characters, or just mentions
-                logs_list = []
-                for content, created_at in message_rows:
-                    if content and content.strip():
-                        content_clean = content.strip()
-                        # Filter out:
-                        # - Very short messages (less than 3 chars) unless they're meaningful
-                        # - Single emoji or punctuation
-                        # - Just mentions (@username)
-                        if len(content_clean) >= 3 or content_clean in ["ok", "да", "ні", "yes", "no"]:
-                            # Skip if it's just a mention
-                            if not (content_clean.startswith("@") and len(content_clean.split()) == 1):
-                                logs_list.append(content_clean)
-
-                # Take the most recent messages (last 50-100) for context
-                # Keep chronological order so AI sees conversation flow
-                if logs_list:
-                    # Get last 100 messages for better context, but prioritize recent ones
-                    if len(logs_list) > 100:
-                        # Take last 100, but weight towards recent
-                        logs_list = logs_list[-100:]
-                    # Keep all if less than 100
-                    
-                    logger.info(
-                        "Fetched message logs for autocard",
-                        target_user_id=target_user_id,
-                        total_messages=len(message_rows),
-                        filtered_messages=len(logs_list),
-                        sample_messages=logs_list[:3] if len(logs_list) >= 3 else logs_list,
-                    )
-                else:
-                    logger.warning(
-                        "No valid messages found after filtering",
-                        target_user_id=target_user_id,
-                        total_rows=len(message_rows),
-                    )
-
-            except Exception as e:
-                logger.error(
-                    "Error fetching message logs",
-                    target_user_id=target_user_id,
-                    error=str(e),
-                    exc_info=True,
-                )
-                await status_msg.edit_text("❌ Помилка при отриманні повідомлень.")
-                return
-            break
-
-        # Architect Step
+        # Update status
         await status_msg.edit_text("🧠 Проєктую архітектуру картки...")
 
-        architect = CardArchitectService()
-        # Pass target user ID and name to context for persona-based card generation
-        blueprint = await architect.generate_blueprint(
-            logs_list, 
-            target_user_id=target_user_id,
-            user_name=target_user_name
+        # Use NanoBananaService for complete AI-driven generation
+        nano_banana = NanoBananaService()
+        image_url, blueprint = await nano_banana.generate_card_for_user(
+            user_id=target_user_id,
+            chat_id=chat_id,
+            bot=bot,
+            user_name=target_user_name,
         )
 
-        if not blueprint:
-            await status_msg.edit_text("❌ Помилка при генерації архітектури картки.")
+        if not blueprint or not image_url:
+            await status_msg.edit_text(
+                f"❌ Не вдалося згенерувати картку для користувача {escaped_display}."
+            )
             return
-
-        # Art Forge Step
-        await status_msg.edit_text("🎨 Кую візуал у нано-горні...")
-
-        art_forge = ArtForgeService()
-        image_url = await art_forge.forge_card_image(
-            blueprint.raw_image_prompt_en, blueprint.biome
-        )
 
         # Delete status message
         await status_msg.delete()
@@ -457,6 +386,12 @@ async def cmd_autocard(message: Message, bot: Bot) -> None:
             "atk": blueprint.stats["atk"],
             "def": blueprint.stats["def"],
             "lore": blueprint.lore,
+            "dominant_color_hex": blueprint.dominant_color_hex,
+            "accent_color_hex": blueprint.accent_color_hex,
+            "attacks": blueprint.attacks,
+            "weakness": blueprint.weakness,
+            "resistance": blueprint.resistance,
+            "print_date": blueprint.print_date,
             "target_user_id": target_user_id,
         }
         blueprint_id = await session_manager.store_blueprint(blueprint_data, ttl=3600)
@@ -487,12 +422,48 @@ async def cmd_autocard(message: Message, bot: Bot) -> None:
         if image_url:
             # If we have an image path, send as photo using FSInputFile
             from pathlib import Path
+            from database.enums import Rarity
 
             image_path = Path(image_url)
-            if image_path.exists():
-                photo = FSInputFile(str(image_path))
+            is_rare = blueprint.rarity in (Rarity.EPIC, Rarity.LEGENDARY, Rarity.MYTHIC)
+            
+            if is_rare:
+                # For rare cards, try animated MP4 first, then GIF fallback
+                animated_mp4_path = image_path.parent / f"{image_path.stem}_animated.mp4"
+                animated_gif_path = image_path.parent / f"{image_path.stem}_animated.gif"
+                
+                if animated_mp4_path.exists():
+                    # Use answer_animation with MP4 - Telegram displays it as GIF
+                    animation_file = FSInputFile(str(animated_mp4_path))
+                    await message.answer_animation(
+                        animation=animation_file,
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                elif animated_gif_path.exists():
+                    # Fallback to GIF if MP4 doesn't exist
+                    animation_file = FSInputFile(str(animated_gif_path))
+                    await message.answer_animation(
+                        animation=animation_file,
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                elif image_path.exists():
+                    # Fallback to regular photo
+                    photo_file = FSInputFile(str(image_path))
+                    await message.answer_photo(
+                        photo=photo_file,
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+            elif image_path.exists():
+                # Common/Rare: always send as photo
+                photo_file = FSInputFile(str(image_path))
                 await message.answer_photo(
-                    photo=photo,
+                    photo=photo_file,
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode="Markdown",
@@ -576,14 +547,22 @@ async def handle_autocard_approve(
                     rarity=blueprint_data["rarity"],
                     biome_affinity=BiomeType(blueprint_data["biome"]),
                     stats={"atk": blueprint_data["atk"], "def": blueprint_data["def"]},
+                    attacks=blueprint_data.get("attacks", []),
+                    weakness=blueprint_data.get("weakness"),
+                    resistance=blueprint_data.get("resistance"),
+                    print_date=blueprint_data.get("print_date"),
                 )
                 session.add(card_template)
                 await session.flush()
 
+                # Generate unique display ID for the card
+                display_id = await generate_unique_display_id(session)
+                
                 # Create UserCard for target user
                 user_card = UserCard(
                     user_id=db_user.telegram_id,
                     template_id=card_template.id,
+                    display_id=display_id,
                 )
                 session.add(user_card)
                 await session.commit()

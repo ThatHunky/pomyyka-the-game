@@ -7,15 +7,16 @@ from google import genai
 from google.genai import types
 
 from config import settings
-from database.enums import BiomeType
+from database.enums import BiomeType, Rarity
 from logging_config import get_logger
+from services.card_animator import CardAnimator
 from utils.images import save_generated_image
 
 logger = get_logger(__name__)
 
 UNIFORM_STYLE_GUIDE = (
-    "Trading card illustration, cohesive high fantasy cyberpunk fusion art style, "
-    "ornate border design elements, digital painting, masterpiece, highly detailed, "
+    "Pokemon Trading Card Game style illustration, vibrant and colorful art style, "
+    "clean trading card aesthetic, digital painting, masterpiece, highly detailed, "
     "8k resolution, cinematic lighting, rich textures."
 )
 
@@ -41,6 +42,7 @@ class ArtForgeService:
         self._cards_dir.mkdir(parents=True, exist_ok=True)
         self._client = genai.Client(api_key=self._api_key)
         self._model_id = settings.image_model_id
+        self._animator = CardAnimator()
 
         logger.info(
             "ArtForgeService initialized",
@@ -49,7 +51,13 @@ class ArtForgeService:
         )
 
     async def forge_card_image(
-        self, blueprint_prompt: str, biome: BiomeType
+        self,
+        blueprint_prompt: str,
+        biome: BiomeType,
+        rarity: Rarity | None = None,
+        placeholder_path: str | None = None,
+        user_photo_bytes: bytes | None = None,
+        group_photo_bytes: bytes | None = None,
     ) -> str:
         """
         Generate a card image from a blueprint prompt and biome.
@@ -57,6 +65,9 @@ class ArtForgeService:
         Args:
             blueprint_prompt: User's description of the card subject.
             biome: Biome type for theme styling.
+            placeholder_path: Optional path to placeholder frame image.
+            user_photo_bytes: Optional user profile photo bytes.
+            group_photo_bytes: Optional group chat photo bytes.
 
         Returns:
             Relative filepath to the saved image (e.g., "media/cards/{uuid}.png").
@@ -74,6 +85,9 @@ class ArtForgeService:
             "Generating card image",
             prompt_length=len(full_prompt),
             biome=biome.value,
+            has_placeholder=placeholder_path is not None,
+            has_user_photo=user_photo_bytes is not None,
+            has_group_photo=group_photo_bytes is not None,
         )
 
         # Exponential backoff retry logic
@@ -84,7 +98,11 @@ class ArtForgeService:
             try:
                 # Generate image using Google Generative AI
                 response = await asyncio.to_thread(
-                    self._generate_image_sync, full_prompt
+                    self._generate_image_sync,
+                    full_prompt,
+                    placeholder_path,
+                    user_photo_bytes,
+                    group_photo_bytes,
                 )
 
                 if not response:
@@ -92,12 +110,43 @@ class ArtForgeService:
 
                 # Save image using utility function
                 relative_path = save_generated_image(response, str(self._cards_dir))
+                
+                # Get absolute path for animation generation
+                if Path(relative_path).is_absolute():
+                    image_path = Path(relative_path)
+                else:
+                    image_path = self._cards_dir / Path(relative_path).name
 
                 logger.info(
                     "Card image generated successfully",
                     filepath=relative_path,
                     biome=biome.value,
                 )
+
+                # Auto-generate animation for rare cards
+                if rarity and rarity in (Rarity.EPIC, Rarity.LEGENDARY, Rarity.MYTHIC):
+                    try:
+                        # Generate animation in background (non-blocking)
+                        animated_path = await asyncio.to_thread(
+                            self._animator.generate_card_animation,
+                            image_path,
+                            rarity,
+                        )
+
+                        if animated_path:
+                            logger.info(
+                                "Card animation generated",
+                                animated_path=str(animated_path),
+                                rarity=rarity.value,
+                            )
+                    except Exception as e:
+                        # Don't fail card generation if animation fails
+                        logger.warning(
+                            "Failed to generate animation (non-critical)",
+                            image_path=str(image_path),
+                            rarity=rarity.value,
+                            error=str(e),
+                        )
 
                 return relative_path
 
@@ -141,12 +190,21 @@ class ArtForgeService:
                         f"Failed to generate image after {max_retries} attempts: {error_msg}"
                     ) from e
 
-    def _generate_image_sync(self, prompt: str) -> bytes:
+    def _generate_image_sync(
+        self,
+        prompt: str,
+        placeholder_path: str | None = None,
+        user_photo_bytes: bytes | None = None,
+        group_photo_bytes: bytes | None = None,
+    ) -> bytes:
         """
         Synchronous wrapper for image generation using Gemini 3 Pro Image.
 
         Args:
             prompt: Full prompt for image generation.
+            placeholder_path: Optional path to placeholder frame image.
+            user_photo_bytes: Optional user profile photo bytes.
+            group_photo_bytes: Optional group chat photo bytes.
 
         Returns:
             Image binary data.
@@ -155,9 +213,99 @@ class ArtForgeService:
             RuntimeError: If image generation fails.
         """
         try:
+            # Build multimodal content array
+            contents = []
+            
+            # Add text prompt
+            contents.append(prompt)
+            
+            # Add placeholder image if provided
+            if placeholder_path:
+                try:
+                    from pathlib import Path
+                    import base64
+                    
+                    placeholder_file = Path(placeholder_path)
+                    if placeholder_file.exists():
+                        placeholder_data = placeholder_file.read_bytes()
+                        # Convert to base64 for inline data
+                        placeholder_b64 = base64.b64encode(placeholder_data).decode('utf-8')
+                        contents.append(
+                            types.Part(
+                                inline_data=types.Blob(
+                                    data=placeholder_b64,
+                                    mime_type="image/png"
+                                )
+                            )
+                        )
+                        logger.debug("Added placeholder image to multimodal request")
+                except Exception as e:
+                    logger.warning("Failed to load placeholder image", error=str(e))
+            
+            # Add user photo if provided
+            if user_photo_bytes:
+                try:
+                    import base64
+                    user_photo_b64 = base64.b64encode(user_photo_bytes).decode('utf-8')
+                    contents.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                data=user_photo_b64,
+                                mime_type="image/jpeg"  # Telegram profile photos are typically JPEG
+                            )
+                        )
+                    )
+                    logger.debug("Added user photo to multimodal request")
+                except Exception as e:
+                    logger.warning("Failed to add user photo", error=str(e))
+            
+            # Add group photo if provided
+            if group_photo_bytes:
+                try:
+                    import base64
+                    group_photo_b64 = base64.b64encode(group_photo_bytes).decode('utf-8')
+                    contents.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                data=group_photo_b64,
+                                mime_type="image/jpeg"
+                            )
+                        )
+                    )
+                    logger.debug("Added group photo to multimodal request")
+                except Exception as e:
+                    logger.warning("Failed to add group photo", error=str(e))
+            
+            # Enhance prompt if images are provided
+            if placeholder_path or user_photo_bytes or group_photo_bytes:
+                enhanced_prompt = (
+                    f"{prompt}\n\n"
+                    "IMPORTANT INSTRUCTIONS FOR IMAGE GENERATION:\n"
+                )
+                if placeholder_path:
+                    enhanced_prompt += (
+                        "- Use the provided placeholder frame as the base structure for the card. "
+                        "Generate the card illustration to fit within this frame.\n"
+                    )
+                if user_photo_bytes:
+                    enhanced_prompt += (
+                        "- Integrate the user's profile photo style and colors into the card design. "
+                        "Use the photo as inspiration for the character/illustration, adapting it to match the card's theme.\n"
+                    )
+                if group_photo_bytes:
+                    enhanced_prompt += (
+                        "- Incorporate elements from the group chat photo to add context and atmosphere to the card design.\n"
+                    )
+                enhanced_prompt += (
+                    "- Generate a complete trading card image with the illustration, text, and all card elements "
+                    "integrated into a cohesive design. The final output should be a ready-to-use card image."
+                )
+                # Replace first element (text prompt) with enhanced version
+                contents[0] = enhanced_prompt
+            
             response = self._client.models.generate_content(
                 model=self._model_id,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     # Image configuration for gemini-3-pro-image-preview
                     # See: https://ai.google.dev/gemini-api/docs/image-generation

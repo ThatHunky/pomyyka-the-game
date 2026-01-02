@@ -11,6 +11,7 @@ from database.models import CardTemplate, User, UserCard
 from database.session import get_session
 from logging_config import get_logger
 from services import DropManager
+from utils.card_ids import generate_unique_display_id
 
 logger = get_logger(__name__)
 
@@ -194,10 +195,14 @@ async def _award_card_and_update_message(
                 await drop_manager.release_drop(message_id)
                 return
 
+            # Generate unique display ID for the card
+            display_id = await generate_unique_display_id(session)
+            
             # Create user card
             user_card = UserCard(
                 user_id=db_user.telegram_id,
                 template_id=card_template.id,
+                display_id=display_id,
             )
             session.add(user_card)
             await session.commit()

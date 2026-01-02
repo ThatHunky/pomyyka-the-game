@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config import settings
-from database.enums import BiomeType, Rarity
+from database.enums import AttackType, BiomeType, Rarity, StatusEffect
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +28,12 @@ class CardBlueprint:
     rarity: Rarity
     stats: dict[str, int]  # {"atk": int, "def": int}
     lore: str
+    dominant_color_hex: str  # Primary color for gradients (hex format)
+    accent_color_hex: str  # Secondary color for highlights (hex format)
+    attacks: list[dict]  # List of attack objects
+    weakness: dict | None  # Weakness to attack type
+    resistance: dict | None  # Resistance to attack type
+    print_date: str  # Print date in format MM/YYYY
 
 
 class CardArchitectService:
@@ -135,6 +141,12 @@ class CardArchitectService:
                 rarity=ai_blueprint.rarity,
                 stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def},
                 lore=ai_blueprint.lore_ua,
+                dominant_color_hex=ai_blueprint.dominant_color_hex,
+                accent_color_hex=ai_blueprint.accent_color_hex,
+                attacks=ai_blueprint.attacks,
+                weakness=ai_blueprint.weakness,
+                resistance=ai_blueprint.resistance,
+                print_date=ai_blueprint.print_date,
             )
 
             logger.info(
@@ -208,6 +220,12 @@ class CardArchitectService:
                 rarity=ai_blueprint.rarity,
                 stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def},
                 lore=ai_blueprint.lore_ua,
+                dominant_color_hex=ai_blueprint.dominant_color_hex,
+                accent_color_hex=ai_blueprint.accent_color_hex,
+                attacks=ai_blueprint.attacks,
+                weakness=ai_blueprint.weakness,
+                resistance=ai_blueprint.resistance,
+                print_date=ai_blueprint.print_date,
             )
 
             logger.info(

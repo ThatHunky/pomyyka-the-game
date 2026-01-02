@@ -1,6 +1,8 @@
 """Admin handlers for card creation and management."""
 
+import asyncio
 import re
+from pathlib import Path
 from typing import Optional
 
 from aiogram import Router
@@ -10,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -280,12 +283,20 @@ async def process_stats(message: Message, state: FSMContext) -> None:
     # Save card to database
     async for session in get_session():
         try:
+            # Get current month/year for print_date
+            from datetime import datetime
+            current_print_date = datetime.now().strftime("%m/%Y")
+            
             card_template = CardTemplate(
                 name=card_name,
                 image_url=image_url,
                 rarity=rarity,
                 biome_affinity=biome_type,
                 stats={"atk": atk, "def": defense},
+                attacks=None,  # Manual cards don't have attacks yet
+                weakness=None,
+                resistance=None,
+                print_date=current_print_date,
             )
             session.add(card_template)
             await session.flush()
@@ -459,6 +470,10 @@ async def cmd_createcommoncard(message: Message) -> None:
                     rarity=blueprint.rarity,
                     biome_affinity=blueprint.biome,
                     stats={"atk": blueprint.stats["atk"], "def": blueprint.stats["def"]},
+                    attacks=blueprint.attacks,
+                    weakness=blueprint.weakness,
+                    resistance=blueprint.resistance,
+                    print_date=blueprint.print_date,
                 )
                 session.add(card_template)
                 await session.flush()
@@ -513,3 +528,78 @@ async def cmd_createcommoncard(message: Message) -> None:
             exc_info=True,
         )
         await status_msg.edit_text(f"❌ Помилка при створенні картки: {str(e)}")
+
+
+@router.message(Command("test_normals"))
+async def cmd_test_normals(message: Message) -> None:
+    """Send all NORMAL card templates as a test (admin only)."""
+    if not await check_admin(message):
+        return
+    
+    placeholders_dir = Path("assets/placeholders")
+    
+    # Find all NORMAL card files
+    normal_cards = []
+    rarities = ["COMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC"]
+    
+    for rarity in rarities:
+        is_rare = rarity in ["EPIC", "LEGENDARY", "MYTHIC"]
+        
+        if is_rare:
+            # For rare cards, try animated MP4 first, then GIF fallback
+            animated_mp4_path = placeholders_dir / f"NORMAL_{rarity}_animated.mp4"
+            if animated_mp4_path.exists():
+                normal_cards.append(("NORMAL", rarity, animated_mp4_path, True, "animation"))
+                continue
+            
+            animated_gif_path = placeholders_dir / f"NORMAL_{rarity}_animated.gif"
+            if animated_gif_path.exists():
+                normal_cards.append(("NORMAL", rarity, animated_gif_path, True, "animation"))
+                continue
+        
+        # Fallback to regular version
+        regular_path = placeholders_dir / f"NORMAL_{rarity}.webp"
+        if regular_path.exists():
+            normal_cards.append(("NORMAL", rarity, regular_path, False, "photo"))
+    
+    if not normal_cards:
+        await message.answer("❌ Не знайдено жодних NORMAL карток в assets/placeholders/")
+        return
+    
+    await message.answer(f"📤 Відправляю {len(normal_cards)} NORMAL карток для тестування...")
+    
+    sent_count = 0
+    for biome, rarity, card_path, is_animated, file_type in normal_cards:
+        try:
+            file_input = FSInputFile(str(card_path))
+            caption = f"🎴 **{biome} {rarity}**"
+            if is_animated:
+                caption += " ✨ (Animated)"
+            
+            if file_type == "animation":
+                # Use answer_animation - works with both MP4 and GIF, displays as GIF in Telegram
+                await message.answer_animation(
+                    animation=file_input,
+                    caption=caption,
+                    parse_mode="Markdown",
+                )
+            else:
+                await message.answer_photo(
+                    photo=file_input,
+                    caption=caption,
+                    parse_mode="Markdown",
+                )
+            
+            sent_count += 1
+            
+            # Small delay to avoid rate limiting
+            await asyncio.sleep(0.5)
+            
+        except Exception as e:
+            logger.warning(
+                "Failed to send test card",
+                card_path=str(card_path),
+                error=str(e),
+            )
+    
+    await message.answer(f"✅ Відправлено {sent_count} з {len(normal_cards)} карток!")

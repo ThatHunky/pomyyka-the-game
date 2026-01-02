@@ -7,7 +7,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, field_validator
 
 from config import settings
-from database.enums import BiomeType, Rarity
+from database.enums import AttackType, BiomeType, Rarity, StatusEffect
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +28,28 @@ class CardBlueprint(BaseModel):
     )
     raw_image_prompt_en: str = Field(
         ..., description="Descriptive prompt for visual elements only (English)"
+    )
+    dominant_color_hex: str = Field(
+        ..., description="Primary color for gradients and accents (hex format, e.g., #FF5733)"
+    )
+    accent_color_hex: str = Field(
+        ..., description="Secondary color for highlights and details (hex format, e.g., #33FF57)"
+    )
+    attacks: list[dict] = Field(
+        default_factory=list,
+        description="List of attacks. Each attack: {\"name\": str (Ukrainian), \"type\": AttackType enum, \"damage\": int (0-100), \"energy_cost\": int (1-3), \"effect\": str (optional description), \"status_effect\": StatusEffect enum (optional)}"
+    )
+    weakness: dict | None = Field(
+        default=None,
+        description="Weakness to attack type: {\"type\": AttackType enum, \"multiplier\": float (typically 2.0)}"
+    )
+    resistance: dict | None = Field(
+        default=None,
+        description="Resistance to attack type: {\"type\": AttackType enum, \"reduction\": int (typically 10-30)}"
+    )
+    print_date: str = Field(
+        ...,
+        description="Print date in format MM/YYYY (e.g., '01/2025') - like Pokemon TCG cards"
     )
 
     @field_validator("lore_ua")
@@ -79,6 +101,12 @@ CardBlueprint Schema Requirements:
 - stats_meme: integer (0-100) - meme/humor stat, reflects the playful nature of the game
 - lore_ua: string (maximum 2 sentences in Ukrainian) - brief, thematic lore that fits the card
 - raw_image_prompt_en: string (English) - descriptive prompt for visual elements ONLY, no game mechanics or stats, focus on appearance, style, mood, colors, composition
+- dominant_color_hex: string (hex format like "#FF5733") - primary color for gradients and card accents, should match the card's theme and biome
+- accent_color_hex: string (hex format like "#33FF57") - secondary color for highlights and details, should complement the dominant color
+- attacks: array of attack objects - Each attack must have: name (Ukrainian), type (one of: "PHYSICAL", "FIRE", "WATER", "GRASS", "PSYCHIC", "TECHNO", "DARK", "MEME"), damage (0-100), energy_cost (1-3), effect (optional string description), status_effect (optional, one of: "NONE", "BURNED", "POISONED", "PARALYZED", "CONFUSED", "ASLEEP", "FROZEN"). Cards should have 1-2 attacks based on rarity (Common: 1, Rare+: 2)
+- weakness: object or null - If present: {"type": AttackType enum, "multiplier": float (typically 2.0)}. Cards should have a weakness to one attack type that makes thematic sense (e.g., Fire weak to Water)
+- resistance: object or null - If present: {"type": AttackType enum, "reduction": int (typically 10-30)}. Cards may have resistance to one attack type that makes thematic sense
+- print_date: string (format "MM/YYYY") - Current month and year when card is printed, like real Pokemon TCG cards (e.g., "01/2025" for January 2025)
 
 Card Name Requirements:
 - CRITICAL: If a user name/identity is provided in the context, the card name MUST be based on or incorporate that user's name/persona
@@ -105,6 +133,14 @@ Write engaging, brief lore in Ukrainian (2 sentences maximum) that captures the 
 Image Prompt:
 Create a detailed visual description in English that focuses purely on visual elements: appearance, art style, color palette, mood, composition, details. Do NOT include game mechanics, stats, or text elements.
 
+Attack System (Pokemon TCG-inspired):
+- Each card should have 1-2 attacks based on rarity (Common: 1 attack, Rare+: 2 attacks)
+- Attack types should match the card's biome when possible (Fire biome -> Fire attacks, etc.)
+- Energy cost: 1-3 (higher rarity = can have higher energy cost attacks)
+- Damage should correlate with rarity and energy cost
+- Status effects should be thematic (Fire attacks -> BURNED, Dark attacks -> CONFUSED, etc.)
+- Weakness/Resistance should make thematic sense (Fire weak to Water, Water weak to Grass, etc.)
+
 Output Format:
 Return ONLY valid JSON matching the CardBlueprint schema. No markdown, no code blocks, no explanations."""
 
@@ -127,6 +163,10 @@ Return ONLY valid JSON matching the CardBlueprint schema. No markdown, no code b
             ValueError: If API key is not configured or generation fails after retries.
             ValidationError: If generated JSON doesn't match schema (after retry).
         """
+        # Get current month/year for print_date
+        now = datetime.now()
+        current_print_date = now.strftime("%m/%Y")
+        
         # Build user message from context logs
         user_message = "\n".join(
             [
@@ -134,7 +174,7 @@ Return ONLY valid JSON matching the CardBlueprint schema. No markdown, no code b
                 "---",
                 *user_context_logs,
                 "---",
-                "Generate a card blueprint based on this context.",
+                f"Generate a card blueprint based on this context. Set print_date to '{current_print_date}' (current month/year).",
             ]
         )
 

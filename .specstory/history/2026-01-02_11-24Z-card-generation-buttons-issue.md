@@ -96,3 +96,286 @@ Checking text utilities for markdown escaping:
 
 ---
 
+
+Fixing both handlers: photo messages use captions, not text. Updating them to handle photo and text messages correctly and escape markdown.
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: handlers/admin_autocard.py</summary>
+
+**Chunk 1**
+Lines added: 19, lines removed: 5
+
+```diff
+@@ -602,9 +602,23 @@
+                      user_display = f"користувачу (ID: {target_user_id})"
+  
+-                 # Edit message
+-                 await callback.message.edit_text(
+-                     f"🎉 Картку **{blueprint_data['name']}** створено та видано {user_display}!",
+-                     parse_mode="Markdown",
+-                 )
++                 # Escape markdown to prevent parsing errors
++                 from utils.text import escape_markdown
++                 escaped_card_name = escape_markdown(blueprint_data['name'])
++                 escaped_user_display = escape_markdown(user_display)
++                 success_text = f"🎉 Картку *{escaped_card_name}* створено та видано {escaped_user_display}!"
++ 
++                 # Edit message - handle both photo and text messages
++                 if callback.message.photo:
++                     # Photo message - edit caption
++                     await callback.message.edit_caption(
++                         caption=success_text,
++                         parse_mode="Markdown",
++                     )
++                 else:
++                     # Text message - edit text
++                     await callback.message.edit_text(
++                         text=success_text,
++                         parse_mode="Markdown",
++                     )
+                  await callback.answer()
+  
+```
+
+</details>
+
+</tool-use>
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: handlers/admin_autocard.py</summary>
+
+**Chunk 1**
+Lines added: 8, lines removed: 1
+
+```diff
+@@ -669,5 +669,12 @@
+      await session_manager.delete_blueprint(callback_data.blueprint_id)
+  
+-     await callback.message.edit_text("❌ Створення картки скасовано.")
++     # Edit message - handle both photo and text messages
++     cancel_text = "❌ Створення картки скасовано."
++     if callback.message.photo:
++         # Photo message - edit caption
++         await callback.message.edit_caption(caption=cancel_text)
++     else:
++         # Text message - edit text
++         await callback.message.edit_text(text=cancel_text)
+      await callback.answer()
+  
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Checking for linting errors:
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `handlers/admin_autocard.py`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Verifying the fixes by reading the updated sections:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/admin_autocard.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/admin_autocard.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Checking if we should move the import to the top for consistency:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/admin_autocard.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: handlers/admin_autocard.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Moving the import to the top for consistency:
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: handlers/admin_autocard.py</summary>
+
+**Chunk 1**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -26,4 +26,5 @@
+  from services.card_architect import CardArchitectService, CardBlueprint
+  from services.session_manager import SessionManager
++ from utils.text import escape_markdown
+  
+  logger = get_logger(__name__)
+```
+
+</details>
+
+</tool-use>
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: handlers/admin_autocard.py</summary>
+
+**Chunk 1**
+Lines added: undefined, lines removed: 1
+
+```diff
+@@ -339,5 +339,4 @@
+  
+      # Send initial feedback (escape user_display to avoid Markdown parsing errors)
+-     from utils.text import escape_markdown
+      escaped_display = escape_markdown(user_display)
+      status_msg = await message.answer(f"🕵️‍♂️ Аналізую особистість {escaped_display}...")
+```
+
+</details>
+
+</tool-use>
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: handlers/admin_autocard.py</summary>
+
+**Chunk 1**
+Lines added: undefined, lines removed: 1
+
+```diff
+@@ -603,5 +603,4 @@
+  
+                  # Escape markdown to prevent parsing errors
+-                 from utils.text import escape_markdown
+                  escaped_card_name = escape_markdown(blueprint_data['name'])
+                  escaped_user_display = escape_markdown(user_display)
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Rechecking for linting errors:
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `handlers/admin_autocard.py`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+## Issues Fixed
+
+1. Photo message editing: Both handlers called `edit_text()` on photo messages, which have captions, not text. Updated to:
+   - Check if the message is a photo (`callback.message.photo`)
+   - Use `edit_caption()` for photo messages
+   - Use `edit_text()` for text messages
+
+2. Markdown parsing error: The approval handler didn't escape special characters in card names and user display names. Added proper escaping using `escape_markdown()`.
+
+3. Code organization: Moved `escape_markdown` import to the top-level imports.
+
+The buttons should now work for both photo and text messages. The handlers detect the message type and use the appropriate editing method.
+
+---
+

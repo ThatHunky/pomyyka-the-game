@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, Index, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from database.enums import BiomeType, Rarity
+from database.enums import AttackType, BiomeType, Rarity, StatusEffect
 
 
 class Base(DeclarativeBase):
@@ -56,7 +56,19 @@ class CardTemplate(Base):
     )
     stats: Mapped[dict] = mapped_column(
         JSONB, nullable=False
-    )  # JSONB: {"atk": int, "def": int}
+    )  # JSONB: {"atk": int, "def": int, "meme": int}
+    attacks: Mapped[dict] = mapped_column(
+        JSONB, nullable=True
+    )  # JSONB: List of attack objects, e.g. [{"name": str, "type": AttackType, "damage": int, "energy_cost": int, "effect": str, "status_effect": StatusEffect}]
+    weakness: Mapped[dict] = mapped_column(
+        JSONB, nullable=True
+    )  # JSONB: {"type": AttackType, "multiplier": float} - e.g. {"type": "FIRE", "multiplier": 2.0} means 2x damage from Fire
+    resistance: Mapped[dict] = mapped_column(
+        JSONB, nullable=True
+    )  # JSONB: {"type": AttackType, "reduction": int} - e.g. {"type": "WATER", "reduction": 20} means -20 damage from Water
+    print_date: Mapped[str | None] = mapped_column(
+        String(7), nullable=True
+    )  # Format: "MM/YYYY" e.g. "01/2025" - like Pokemon TCG cards
 
     user_cards: Mapped[list["UserCard"]] = relationship(
         "UserCard", back_populates="template", cascade="all, delete-orphan"
@@ -67,6 +79,9 @@ class UserCard(Base):
     """User-owned card instance."""
 
     __tablename__ = "user_cards"
+    __table_args__ = (
+        UniqueConstraint("display_id", name="uq_user_cards_display_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
@@ -79,6 +94,9 @@ class UserCard(Base):
         ForeignKey("card_templates.id", ondelete="CASCADE"),
         nullable=False,
     )
+    display_id: Mapped[str] = mapped_column(
+        String(10), nullable=False, unique=True, index=True
+    )  # Short human-readable unique ID (e.g., "POM-A1B2")
     acquired_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         insert_default=lambda: datetime.now(timezone.utc)
