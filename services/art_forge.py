@@ -297,6 +297,14 @@ class ArtForgeService:
                     f"{prompt}\n\n"
                     "IMPORTANT INSTRUCTIONS FOR IMAGE GENERATION:\n"
                 )
+                enhanced_prompt += (
+                    "- ALL visible text on the final card must be in Ukrainian. "
+                    "This includes the card name, attacks, descriptions, UI labels, and rarity label. "
+                    "DO NOT output English text.\n"
+                    "- Use Ukrainian rarity words: "
+                    "ЗВИЧАЙНА (Common), РІДКІСНА (Rare), ЕПІЧНА (Epic), ЛЕГЕНДАРНА (Legendary), МІФІЧНА (Mythic).\n"
+                    "- If the template includes placeholders, replace them with Ukrainian text.\n"
+                )
                 if placeholder_path:
                     # Extract biome/rarity from placeholder filename for context
                     placeholder_name = Path(placeholder_path).stem
@@ -359,6 +367,15 @@ class ArtForgeService:
                     biome_emoji = biome_emoji_map.get(biome_ua or "", "🌍")
                     rarity_emoji = rarity_emoji_map.get(rarity_en or "", "⚪")
 
+                    rarity_ua_map = {
+                        "Common": "Звичайна",
+                        "Rare": "Рідкісна",
+                        "Epic": "Епічна",
+                        "Legendary": "Легендарна",
+                        "Mythic": "Міфічна",
+                    }
+                    rarity_ua = rarity_ua_map.get(rarity_en or "", None)
+
                     enhanced_prompt += (
                         "\n\nCARD_FIELDS_TO_RENDER (CRITICAL):\n"
                         "- Replace ALL placeholder text on the template (e.g., 'НАЗВА КАРТКИ', example attacks, default stats, lorem text) "
@@ -372,8 +389,8 @@ class ArtForgeService:
                         enhanced_prompt += f"- Card name (UA): {name_ua}\n"
                     if biome_ua:
                         enhanced_prompt += f"- Biome label: {biome_emoji} {biome_ua}\n"
-                    if rarity_en:
-                        enhanced_prompt += f"- Rarity badge: {rarity_emoji} {rarity_en.upper()}\n"
+                    if rarity_ua:
+                        enhanced_prompt += f"- Rarity badge (UA): {rarity_emoji} {rarity_ua.upper()}\n"
                     if atk is not None:
                         enhanced_prompt += f"- ⚔️ ATK: {atk}\n"
                     if meme is not None:

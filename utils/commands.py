@@ -34,6 +34,12 @@ def get_admin_commands() -> list[BotCommand]:
         BotCommand(command="addcard", description="Створити нову картку вручну"),
         BotCommand(command="autocard", description="Автоматично створити картку з повідомлення користувача"),
         BotCommand(command="createcommoncard", description="Створити шаблон картки через AI з опису"),
+        BotCommand(command="browsecards", description="Переглянути всі доступні шаблони карток"),
+        BotCommand(command="givecard", description="Видати картку користувачу вручну"),
+        BotCommand(command="removecard", description="Прибрати шаблон картки з дропів (soft-delete)"),
+        BotCommand(command="restorecard", description="Відновити шаблон картки у дропах"),
+        BotCommand(command="usercards", description="Переглянути колекцію користувача (адмін)"),
+        BotCommand(command="removecollectedcard", description="Видалити зібрану картку з колекції (адмін)"),
     ]
 
 

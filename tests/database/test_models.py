@@ -64,6 +64,10 @@ class TestCardTemplate:
         assert template.rarity == Rarity.COMMON
         assert template.biome_affinity == BiomeType.NORMAL
         assert template.stats["atk"] == 50
+        # Soft-delete defaults
+        assert template.is_deleted is False
+        assert template.deleted_at is None
+        assert template.deleted_by is None
 
     def test_card_template_with_attacks(self):
         """Test card template with attacks."""
@@ -163,6 +167,32 @@ class TestUserCard:
         
         with pytest.raises(Exception):  # Should raise integrity error
             await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_card_by_display_id(self, db_session, sample_user_db, sample_card_template_db):
+        """Test deleting a user card identified by display_id."""
+        from sqlalchemy import select
+        from utils.card_ids import generate_unique_display_id
+
+        display_id = await generate_unique_display_id(db_session)
+        user_card = UserCard(
+            user_id=sample_user_db.telegram_id,
+            template_id=sample_card_template_db.id,
+            display_id=display_id,
+        )
+        db_session.add(user_card)
+        await db_session.commit()
+
+        stmt = select(UserCard).where(UserCard.display_id == display_id)
+        result = await db_session.execute(stmt)
+        found = result.scalar_one_or_none()
+        assert found is not None
+
+        await db_session.delete(found)
+        await db_session.commit()
+
+        result2 = await db_session.execute(stmt)
+        assert result2.scalar_one_or_none() is None
 
 
 @pytest.mark.unit

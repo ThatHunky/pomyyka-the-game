@@ -196,6 +196,20 @@ async def _award_card_and_update_message(
                 await drop_manager.release_drop(message_id)
                 return
 
+            if getattr(card_template, "is_deleted", False):
+                logger.info(
+                    "Drop claim attempted for deleted template",
+                    template_id=template_id,
+                    user_id=user.id,
+                )
+                await safe_callback_answer(
+                    callback,
+                    "❌ Ця картка тимчасово недоступна (видалена адміном).",
+                    show_alert=True,
+                )
+                await drop_manager.release_drop(message_id)
+                return
+
             # Generate unique display ID for the card
             display_id = await generate_unique_display_id(session)
             

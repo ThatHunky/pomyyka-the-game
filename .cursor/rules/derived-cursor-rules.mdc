@@ -200,6 +200,72 @@ globs: *
     *   Include a simple "edit stats/name/etc" step before saving.
     *   After selecting a biome, the bot should ask to choose the image method (generate or upload).
     *   The user should enter ATK, then DEF, then the rarity should be selected via buttons.
+*   Card Generation Language: All card generation, including names, lore, and descriptions, MUST be in Ukrainian.
+*   Card Creation Stages: Add a "Cancel" button to each stage of card creation, and other applicable states, to allow users to exit the creation process.
+*   Card Creation: Add a "Regenerate" button to card creation, to allow the AI to generate a new card image with the same blueprint data.
+*   Card Templates: Ensure that the `.webp` templates are sent to Gemini for card generation.
+*   Rarity Selection Timing: The rarity option MUST be selected before card generation, as the templates are rarity based.
+*   Everything Must Be In Ukrainian: ALL card generation, including names, lore, descriptions, UI labels printed on the card image (rarity label, biome label, ATK/DEF labels, etc.) and attack type labels on the card image must be in Ukrainian.
+*   Admin Card Template Removal Command: Add a `/removecard` command for admins to delete the card template entirely.
+*   `/cancel` Command: Implement a global `/cancel` command handler that works across all creation states.
+    *   The handler should clear the current state and send a "Cancelled" message.
+*   Cancel Button: Add an inline cancel button to each stage of card creation.
+    *   Implement a new callback data class called `NewCardCancelCallback`.
+    *   Create a handler for `NewCardCancelCallback` that clears the state and edits the message to say "Cancelled."
+*   `/addcard` Image Source: When admin chooses “📤 Завантажити фото” in `/addcard`, the uploaded photo is used as the final card image (no Gemini), and it's saved as `image_url`.
+*   Card Creation Flow Reordering:
+    *   The card creation flow in `/addcard` should be reordered to:
+        1.  Name
+        2.  Biome
+        3.  Rarity
+        4.  Image Source (Generate with AI or Upload Photo)
+        5.  If Generate with AI: Art Prompt
+        6.  If Upload Photo: Upload Photo
+        7.  ATK
+        8.  DEF
+        9.  Generate Image (if AI) / Save Image URL (if Upload)
+        10. Show Preview with Regenerate/Cancel/Confirm
+*   New State: Add a new state called `waiting_for_image_accept` after image generation.
+    *   The photo message will feature a keyboard with options to "Regenerate" or "Continue."
+    *   If the user selects "Regenerate," regenerate the image using the same art prompt, biome, rarity, and template.
+    *   If they choose "Continue," move on to asking for attack values and clean up the keyboard.
+*   The manual admin card creation wizard (`/addcard` / `/newcard`) in `handlers/admin.py` should be updated.
+*   Gemini image generation must receive `.webp` templates and produce Ukrainian text/labels via `services/nano_banana.py` and `services/art_forge.py`.
+*   Admin Card Management:
+    *   `/removecard`: Soft-deletes a card template.
+        *   Admins use the command `/removecard <template_id | name_fragment>`.
+        *   The bot must resolve the template by UUID or using an `ilike` name search.
+        *   The bot MUST show a confirmation message with inline **Confirm/Cancel** buttons.
+        *   On confirm: set `is_deleted=True`, `deleted_at=now()`, and `deleted_by=admin_id`.
+        *   The reply MUST include the template ID, name, and a note that it’s removed from drops until restored.
+    *   `/restorecard`: Restores a soft-deleted card template.
+        *   Admins use the command `/restorecard <template_id | name_fragment>`.
+        *   The bot must find templates even if they are deleted.
+        *   If found and deleted: set `is_deleted=False` and clear deletion metadata.
+    *   Browsing Templates:
+        *   The existing `/browsecards` command MUST show a paginated list of available card templates.
+        *   The template view screen MUST include:
+            *   A **Remove template** button when the card is active.
+            *   A **Restore template** button when the card is deleted.
+            *   The existing **Give card** and **Back** buttons.
+        *   The list page MUST remain as "available templates" (non-deleted). Restoration is accessible via `/restorecard` and the per-template view.
+    *   User Card Management:
+        *   `/usercards`: Lists cards for a specific user.
+            *   Admins use the command `/usercards <user_id>`.
+            *   The bot MUST show a paginated list similar to the player inventory for the target user.
+            *   Each entry MUST show:
+                *   Template name, rarity, and biome
+                *   `display_id` (human-friendly)
+                *   Acquired time
+            *   Inline controls MUST include:
+                *   Next/Prev page
+                *   View details
+                *   Remove this card (with confirmation)
+        *   `/removecollectedcard`: Removes an individual user-owned card.
+            *   Admins use the command `/removecollectedcard <display_id | user_card_uuid>`.
+            *   The bot MUST load the `UserCard` with `selectinload(UserCard.template)` (and optionally user) for a clear confirmation prompt.
+            *   Inline **Confirm/Cancel** buttons MUST be provided.
+            *   On confirm: delete the `UserCard` row.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -209,6 +275,8 @@ globs: *
     1.  Run a database migration to add the column.
     2.  Populate display IDs for any existing cards in the database.
 *   The Dockerfile must install `ffmpeg`.
+*   Apply all changes to both manual card creation (`/addcard` in `handlers/admin.py`) and AI-assisted card creation (`/autocard` in `handlers/admin_autocard.py`).
+*   When implementing pagination for `/browsecards`, use offset and limit to manage content. Navigation buttons should use callback data based on the page number. Consider adding filtering to improve usability.
 
 ## DEBUGGING
 
@@ -320,10 +388,6 @@ globs: *
                 *   Animation should autoplay on open
                 *   Should not show video player controls
                 *   Should loop smoothly
-        *   **Expected Results:**
-            *   ✅ Desktop: Animations autoplay and loop
-            *   ✅ Mobile: Animations display correctly (not as broken videos)
-            *   ✅ Both: Smooth playback without stuttering
             *   ✅ File sizes: Smaller than equivalent GIFs
         *   **Rollback Plan (if needed):**
             *   If issues persist, you can:
@@ -333,61 +397,4 @@ globs: *
                 4.  Use GIF format instead of MP4 (set in card_animator.py)
 *   **Card Info Generation**: Investigate and fix issues related to incorrect card information generation. This is a high priority.
     *   The image generation model isn't incorporating blueprint text fields, just leaving placeholders. This could be related to the way prompts are structured in the "NanoBanana" service. It seems the final card image generation might not be including necessary blueprint JSON fields in the prompt. It's possible they avoided instructing the model to produce text to prevent inaccuracies, given how generative models handle text.
-    *   To fix this, pass full card fields into the image prompt. Extend `ArtForgeService.forge_card_image(...)` and `_generate_image_sync(...)` to accept an optional `card_fields: dict | None`. When a placeholder is used, append a strict “CARD_FIELDS_TO_RENDER” block to the prompt:
-        *   Card name (UA)
-        *   Biome label (emoji + UA)
-        *   Rarity badge (emoji + UPPERCASE English)
-        *   Stats lines: `⚔️ ATK`, `🎭 MEME`, `🛡️ DEF`
-        *   Attacks list (name/type/damage/energy/effect/status)
-        *   Lore (UA)
-        *   Print date
-        *   Weakness/resistance
-    *   Add explicit instructions: “**Replace placeholder text** (e.g. `НАЗВА КАРТКИ`, `Приклад Атаки …`, default stats) with these exact values; don’t invent new text; keep the template layout.”
-    *   Update callers to pass `card_fields`:
-        *   `services/nano_banana.py`: build a dict from the generated `CardBlueprint` and pass it into `forge_card_image(...)`.
-        *   `handlers/admin_autocard.py`: in `_regenerate_card_image(...)`, pass the Redis `blueprint_data` as `card_fields` so regenerations after edits also render text.
-    *   Blueprint updates currently don’t persist (hidden bug). `SessionManager.store_blueprint()` always creates a new UUID. Current code uses it for “updates” and ignores the returned ID, so callbacks keep pointing at stale data. To fix this, add `SessionManager.update_blueprint(blueprint_id, blueprint_data, ttl=...)` in `services/session_manager.py` and replace the incorrect “update via store_blueprint” calls.
-    *   Replace JSON editing with button-driven editor in `handlers/admin_autocard.py`: Replace the current `CardEditStates.waiting_for_json` flow with an inline **edit menu**:
-        *   Top-level edit keyboard: `📛 Назва`, `🌍 Біом`, `💎 Рідкість`, `📊 Стати (ATK/DEF/MEME)`, `📖 Лор`, `⚡ Атаки`, `🖼 Prompt`, `🗓 Дата`, `⬅️ Назад`.
-        *   Biome/rarity/type/status selections are done via inline choices (no typing).
-        *   Text/number fields prompt the admin for a value (FSM `waiting_for_value`), validate, then regenerate.
-        *   After any edit, automatically:
-            *   update the Redis blueprint via `update_blueprint`
-            *   regenerate the image via `_regenerate_card_image`
-            *   update the preview caption (and keep the four main actions available).
-    *   Escape Markdown V2 / Markdown special chars when building captions and editor text via `utils/text.py::escape_markdown()`.
-    *   Keep callback data short (blueprint_id + small field/value codes) to avoid Telegram 64-byte limits.
-
-## INFRASTRUCTURE
-
-*   Docker Compose should define `bot`, `db` (PostgreSQL), and `redis` services.
-*   Docker container must wait for Postgres and Redis to be healthy before starting the bot. This can be achieved through health checks in `docker-compose.yml` and/or retry logic in the Python startup code.
-*   Use named volumes for `pg_data` and `redis_data` to persist data.
-*   Dockerfile: The `CMD` instruction should be `CMD ["python", "main.py"]` to correctly start the bot application.
-*   To make the `data/chat_exports` folder accessible from the container, add a volume mount in `docker-compose.yml` to mount the directory on the host to `/app/data/chat_exports` inside the container:
-    ```yaml
-    volumes:
-      - ./data/chat_exports:/app/data/chat_exports
-      - ./assets:/app/assets
-    ```
-    *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
-    *   The `./assets` directory on the host is mounted into the container at `/app/assets`. This allows the container to access and modify card assets.
-*   The Dockerfile must install `ffmpeg`. The `assets/placeholders/` directory is mounted as a volume to allow the container to modify card assets.
-
-## REDIS
-
-*   Utilize `services/redis_lock.py` with a Lua script for atomic operations to prevent race conditions when claiming drops. The Lua script should:
-    *   Atomically check if the drop key exists.
-    *   If it doesn't, set the key to the user ID, set a TTL, and return 1.
-    *   If it does exist, return 0.
-*   Use async Redis (`redis.asyncio`) to match the project's async pattern.
-*   Load the script once and cache it via SHA.
-*   Implement error handling: return `False` on Redis errors to prevent double claims.
-*   Implement `DropManager` class in `services/redis_lock.py` with methods:
-    *   `try_claim_drop(message_id, user_id, ttl)`
-    *   `release_drop()` - manual cleanup
-    *   `get_claim_owner()` - check who claimed a drop
-    *   `close()` - cleanup connection
-*   Implement `services/session_manager.py` to manage trade and battle sessions.
-*   The `SessionManager` should also include methods for storing and retrieving blueprint data for autocard flows, using UUIDs as keys. These methods are:
-    *   `store_blueprint(blueprint(blueprint_data: dict, ttl:
+    *   To fix this, pass full card fields into the image prompt. Extend `ArtForgeService.forge_card_image(...)` and `_generate_image_sync(...)` to accept an optional `card_fields: dict | None`. When a placeholder is used, append a

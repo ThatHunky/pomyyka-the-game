@@ -128,12 +128,23 @@ class CardTemplate(Base):
         String(7), nullable=True
     )  # Format: "MM/YYYY" e.g. "01/2025" - like Pokemon TCG cards
 
+    # Soft-delete support (so admins can remove/restore templates without breaking inventories)
+    # NOTE: Column defaults are applied at INSERT time; some tests expect Python-side defaults.
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     user_cards: Mapped[list["UserCard"]] = relationship(
         "UserCard",
         back_populates="template",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        if self.is_deleted is None:
+            self.is_deleted = False
 
 
 class UserCard(Base):

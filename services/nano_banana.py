@@ -386,7 +386,7 @@ class NanoBananaService(ArtForgeService):
             return None, None
 
     async def generate_from_prompt(
-        self, user_prompt: str, biome: BiomeType
+        self, user_prompt: str, biome: BiomeType, *, rarity: Rarity | None = None
     ) -> str:
         """
         Generate card image from user-provided prompt and biome (legacy method).
@@ -394,6 +394,7 @@ class NanoBananaService(ArtForgeService):
         Args:
             user_prompt: User's art description prompt.
             biome: Biome type for theme styling.
+            rarity: Optional rarity for selecting the correct template (.webp).
 
         Returns:
             Relative filepath to the saved image (e.g., "media/cards/{uuid}.png").
@@ -401,17 +402,25 @@ class NanoBananaService(ArtForgeService):
         Raises:
             RuntimeError: If image generation fails after all retries.
         """
-        # Use the same style guide as ArtForgeService for consistency
-        full_prompt = (
-            f"{UNIFORM_STYLE_GUIDE} Subject: {user_prompt}. "
-            f"Biome theme: {biome.value}."
-        )
-
         logger.debug(
             "Generating manual card image",
-            prompt_length=len(full_prompt),
+            prompt_length=len(user_prompt or ""),
             biome=biome.value,
+            rarity=rarity.value if rarity else None,
         )
 
-        # Use parent's forge_card_image method which handles retries and saving
-        return await self.forge_card_image(user_prompt, biome)
+        placeholder_path: str | None = None
+        if rarity is not None:
+            placeholder_path = self._get_placeholder_path(biome, rarity)
+
+        # Use parent's forge_card_image method which handles retries and saving.
+        # We pass the rarity-specific template so Gemini can follow the correct frame.
+        return await self.forge_card_image(
+            blueprint_prompt=user_prompt,
+            biome=biome,
+            rarity=rarity,
+            placeholder_path=placeholder_path,
+            user_photo_bytes=None,
+            group_photo_bytes=None,
+            card_fields=None,
+        )

@@ -142,7 +142,10 @@ class DropScheduler:
             biome = get_chat_biome(group.chat_id)
 
             # Select random CardTemplate matching biome
-            stmt = select(CardTemplate).where(CardTemplate.biome_affinity == biome)
+            stmt = select(CardTemplate).where(
+                CardTemplate.biome_affinity == biome,
+                CardTemplate.is_deleted == False,  # noqa: E712
+            )
             result = await session.execute(stmt)
             templates = result.scalars().all()
 

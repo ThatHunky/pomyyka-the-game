@@ -3,10 +3,14 @@
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import settings
 from database.models import Base
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Create async engine
 engine = create_async_engine(
@@ -79,3 +83,35 @@ async def init_db() -> None:
     """Initialize database tables."""
     async with engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+
+        # Lightweight schema migration (project currently doesn't use Alembic).
+        # Ensure soft-delete columns exist on Postgres even for existing deployments.
+        try:
+            if conn.dialect.name == "postgresql":
+                await conn.execute(
+                    text(
+                        """
+                        ALTER TABLE card_templates
+                          ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+                        """
+                    )
+                )
+                await conn.execute(
+                    text(
+                        """
+                        ALTER TABLE card_templates
+                          ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
+                        """
+                    )
+                )
+                await conn.execute(
+                    text(
+                        """
+                        ALTER TABLE card_templates
+                          ADD COLUMN IF NOT EXISTS deleted_by BIGINT NULL;
+                        """
+                    )
+                )
+        except Exception as e:
+            # Don't crash the bot on migration failure; log loudly instead.
+            logger.error("init_db migration failed", error=str(e), exc_info=True)
