@@ -20,6 +20,9 @@ from database.enums import BiomeType, Rarity
 from database.models import CardTemplate
 from database.session import get_session
 from logging_config import get_logger
+from services.art_forge import ArtForgeService
+from services.card_architect import CardArchitectService
+from services.chat_import import ChatImportService
 from services.nano_banana import NanoBananaService
 
 logger = get_logger(__name__)
@@ -319,3 +322,194 @@ async def process_stats(message: Message, state: FSMContext) -> None:
                 f"❌ Помилка при збереженні картки: {str(e)}",
             )
             break
+
+
+@router.message(Command("import_chat"))
+async def cmd_import_chat(message: Message) -> None:
+    """Import chat history from Telegram JSON export."""
+    if not await check_admin(message):
+        return
+
+    # Parse filename from command
+    command_args = message.text.split(maxsplit=1)
+    if len(command_args) < 2:
+        await message.answer(
+            "❌ Вкажіть назву файлу.\n\n"
+            "Використання: `/import_chat result.json`\n\n"
+            "Файл має бути в директорії `data/chat_exports/`",
+            parse_mode="Markdown",
+        )
+        return
+
+    filename = command_args[1].strip()
+
+    # Validate filename (prevent path traversal)
+    if "/" in filename or "\\" in filename or ".." in filename:
+        await message.answer("❌ Невірна назва файлу.")
+        return
+
+    status_msg = await message.answer(f"📥 Імпортую чат з файлу `{filename}`...")
+
+    async def update_progress(text: str) -> None:
+        """Update progress message."""
+        try:
+            await status_msg.edit_text(text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning("Error updating progress message", error=str(e))
+
+    try:
+        import_service = ChatImportService()
+        stats = await import_service.import_telegram_json(filename, progress_callback=update_progress)
+
+        result_text = (
+            f"✅ **Імпорт завершено!**\n\n"
+            f"📨 Повідомлень імпортовано: {stats['messages_imported']}\n"
+            f"👤 Користувачів створено: {stats['users_created']}\n"
+            f"💬 Чатів створено: {stats['chats_created']}\n"
+        )
+
+        if stats["errors"] > 0:
+            result_text += f"⚠️ Помилок: {stats['errors']}"
+
+        await status_msg.edit_text(result_text, parse_mode="Markdown")
+
+        logger.info(
+            "Chat import completed by admin",
+            admin_id=message.from_user.id,
+            filename=filename,
+            **stats,
+        )
+
+    except FileNotFoundError:
+        await status_msg.edit_text(
+            f"❌ Файл `{filename}` не знайдено в `data/chat_exports/`",
+            parse_mode="Markdown",
+        )
+    except ValueError as e:
+        await status_msg.edit_text(f"❌ Помилка формату файлу: {str(e)}")
+    except Exception as e:
+        logger.error(
+            "Error importing chat",
+            filename=filename,
+            admin_id=message.from_user.id,
+            error=str(e),
+            exc_info=True,
+        )
+        await status_msg.edit_text(f"❌ Помилка при імпорті: {str(e)}")
+
+
+@router.message(Command("createcommoncard"))
+async def cmd_createcommoncard(message: Message) -> None:
+    """
+    Create a reusable card template using AI generation from a detailed prompt.
+    
+    Usage: /createcommoncard <detailed prompt>
+    Example: /createcommoncard Шлюхобот - вульгарний мемний робот з техно біому, низька рідкість
+    """
+    if not await check_admin(message):
+        return
+
+    # Parse command arguments
+    command_args = message.text.split(maxsplit=1)
+    if len(command_args) < 2:
+        await message.answer(
+            "❌ Вкажіть опис картки.\n\n"
+            "Використання: `/createcommoncard <опис>`\n\n"
+            "Приклад: `/createcommoncard Шлюхобот - вульгарний мемний робот з техно біому, низька рідкість`\n\n"
+            "AI автоматично визначить назву, біом, рідкість, стати та згенерує зображення.",
+            parse_mode="Markdown",
+        )
+        return
+
+    detailed_prompt = command_args[1].strip()
+    if not detailed_prompt:
+        await message.answer("❌ Опис не може бути порожнім.")
+        return
+
+    status_msg = await message.answer("🧠 Генерую архітектуру картки з AI...")
+
+    try:
+        # Step 1: Generate blueprint from prompt
+        architect = CardArchitectService()
+        blueprint = await architect.generate_blueprint_from_prompt(detailed_prompt)
+
+        if not blueprint:
+            await status_msg.edit_text("❌ Помилка при генерації архітектури картки.")
+            return
+
+        # Step 2: Generate image
+        await status_msg.edit_text("🎨 Генерую зображення...")
+        art_forge = ArtForgeService()
+        image_path = await art_forge.forge_card_image(
+            blueprint.raw_image_prompt_en, blueprint.biome
+        )
+
+        if not image_path:
+            await status_msg.edit_text("❌ Помилка при генерації зображення.")
+            return
+
+        # Step 3: Create CardTemplate in database
+        await status_msg.edit_text("💾 Зберігаю шаблон картки...")
+
+        async for session in get_session():
+            try:
+                card_template = CardTemplate(
+                    name=blueprint.name,
+                    image_url=image_path,
+                    rarity=blueprint.rarity,
+                    biome_affinity=blueprint.biome,
+                    stats={"atk": blueprint.stats["atk"], "def": blueprint.stats["def"]},
+                )
+                session.add(card_template)
+                await session.flush()
+
+                # Format success message
+                from utils.text import escape_markdown
+                escaped_name = escape_markdown(blueprint.name)
+                escaped_lore = escape_markdown(blueprint.lore)
+
+                success_text = (
+                    f"✅ **Шаблон картки успішно створено!**\n\n"
+                    f"📛 **Назва:** {escaped_name}\n"
+                    f"🌍 **Біом:** {blueprint.biome.value}\n"
+                    f"⚔️ **Атака:** {blueprint.stats['atk']}\n"
+                    f"🛡️ **Захист:** {blueprint.stats['def']}\n"
+                    f"💎 **Рідкість:** {blueprint.rarity.value}\n\n"
+                    f"📖 **Лоре:** {escaped_lore}\n\n"
+                    f"🆔 **ID шаблону:** `{card_template.id}`\n\n"
+                    f"🎴 Цей шаблон тепер доступний для розподілу через дропи!"
+                )
+
+                await status_msg.edit_text(success_text, parse_mode="Markdown")
+
+                logger.info(
+                    "Common card template created via AI",
+                    card_id=str(card_template.id),
+                    card_name=blueprint.name,
+                    rarity=blueprint.rarity.value,
+                    biome=blueprint.biome.value,
+                    admin_id=message.from_user.id,
+                )
+
+                await session.commit()
+                break
+
+            except Exception as e:
+                logger.error(
+                    "Error saving common card template",
+                    error=str(e),
+                    admin_id=message.from_user.id,
+                    exc_info=True,
+                )
+                await status_msg.edit_text(f"❌ Помилка при збереженні шаблону: {str(e)}")
+                await session.rollback()
+                break
+
+    except Exception as e:
+        logger.error(
+            "Error in createcommoncard command",
+            error=str(e),
+            admin_id=message.from_user.id,
+            exc_info=True,
+        )
+        await status_msg.edit_text(f"❌ Помилка при створенні картки: {str(e)}")

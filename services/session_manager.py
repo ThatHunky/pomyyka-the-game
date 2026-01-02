@@ -514,6 +514,87 @@ class SessionManager:
             )
             return False
 
+    # Blueprint Storage Methods (for autocard callbacks)
+
+    async def store_blueprint(self, blueprint_data: dict, ttl: int = 3600) -> str:
+        """
+        Store blueprint data in Redis for autocard callbacks.
+
+        Args:
+            blueprint_data: Blueprint data dictionary.
+            ttl: Time to live in seconds (default: 3600 = 1 hour).
+
+        Returns:
+            Blueprint ID (UUID string).
+        """
+        blueprint_id = str(uuid4())
+        key = f"blueprint:{blueprint_id}"
+        client = await self._get_redis()
+
+        try:
+            await client.setex(key, ttl, json.dumps(blueprint_data))
+            logger.debug("Blueprint stored", blueprint_id=blueprint_id)
+            return blueprint_id
+        except redis.RedisError as e:
+            logger.error(
+                "Redis error storing blueprint",
+                error=str(e),
+                exc_info=True,
+            )
+            raise
+
+    async def get_blueprint(self, blueprint_id: str) -> Optional[dict]:
+        """
+        Get blueprint data from Redis.
+
+        Args:
+            blueprint_id: Blueprint ID (UUID string).
+
+        Returns:
+            Blueprint data dict or None if not found.
+        """
+        key = f"blueprint:{blueprint_id}"
+        client = await self._get_redis()
+
+        try:
+            data = await client.get(key)
+            if data is None:
+                return None
+            return json.loads(data)
+        except (redis.RedisError, json.JSONDecodeError) as e:
+            logger.error(
+                "Redis error getting blueprint",
+                blueprint_id=blueprint_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return None
+
+    async def delete_blueprint(self, blueprint_id: str) -> bool:
+        """
+        Delete blueprint data from Redis.
+
+        Args:
+            blueprint_id: Blueprint ID (UUID string).
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        key = f"blueprint:{blueprint_id}"
+        client = await self._get_redis()
+
+        try:
+            deleted = await client.delete(key)
+            return bool(deleted)
+        except redis.RedisError as e:
+            logger.error(
+                "Redis error deleting blueprint",
+                blueprint_id=blueprint_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return False
+
     async def close(self) -> None:
         """Close Redis connection if it was created by this instance."""
         if self._redis is not None:

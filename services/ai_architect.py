@@ -80,6 +80,12 @@ CardBlueprint Schema Requirements:
 - lore_ua: string (maximum 2 sentences in Ukrainian) - brief, thematic lore that fits the card
 - raw_image_prompt_en: string (English) - descriptive prompt for visual elements ONLY, no game mechanics or stats, focus on appearance, style, mood, colors, composition
 
+Card Name Requirements:
+- CRITICAL: If a user name/identity is provided in the context, the card name MUST be based on or incorporate that user's name/persona
+- The card name should creatively reflect the user's identity, not just generic concepts from their messages
+- Example: If user name is "Келих Вина" (Wine Glass), the card name should incorporate or reference this identity (e.g., "Келих Вина", "Винний Келих", "Келих Війни", etc.)
+- The card name should be in Ukrainian and reflect the user's persona based on their name
+
 Rarity Guidelines:
 - Common: stats 0-30, simple concepts
 - Rare: stats 20-50, more interesting concepts

@@ -4,6 +4,8 @@ services:
     container_name: pomyyka_bot
     env_file:
       - .env
+    volumes:
+      - ./data/chat_exports:/app/data/chat_exports
     depends_on:
       db:
         condition: service_healthy

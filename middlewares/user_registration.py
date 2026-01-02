@@ -73,8 +73,7 @@ class UserRegistrationMiddleware(BaseMiddleware):
                         error=str(e),
                         exc_info=True,
                     )
-                finally:
-                    break
+                break
 
             # Set admin commands if user is admin
             if is_admin(user.id):

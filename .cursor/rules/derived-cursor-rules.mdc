@@ -31,6 +31,15 @@ globs: *
 *   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk"), `ADMIN_USER_IDS` (comma-separated list of Telegram user IDs, for admin authentication).
 *   Context: Using the "Gemini 3.0" feature set which requires the 1.56 SDK.
 *   Game Design Document (GDD): `plan-doc.md` - a complete map of mechanics, economics, and logic, which combines already written code with new ideas (trading, currency, battles).
+*   Chat Export Format: Telegram JSON export (result.json from Telegram Desktop).
+*   Chat Export Location: `data/chat_exports/` directory. Place `result.json` files from Telegram Desktop exports there.
+*   To make the `data/chat_exports` folder accessible from the container, add a volume mount in `docker-compose.yml` to mount the directory on the host to `/app/data/chat_exports` inside the container:
+    ```yaml
+    volumes:
+      - ./data/chat_exports:/app/data/chat_exports
+    ```
+    *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
+*   The contents of the chat export folder (specifically *.json and *.txt files) must be added to `.gitignore`.
 
 ## CODING STANDARDS
 
@@ -45,6 +54,9 @@ globs: *
     *   Quoted values (`"392817811"` or `'392817811'`)
     *   Extra whitespace
     *   Invalid entries (log a warning instead of failing)
+    *   Single `int` values (e.g., `392817811`)
+*   Admin access must be available via username or userID.
+*   When using `CallbackData.pack()`, be aware that it uses colons (`:`) as field separators. To avoid `ValueError: Separator symbol ':' can not be used in value` due to Telegram's 64-byte limit on callback data, store the relevant data in Redis using the `SessionManager` and pass only the UUID in the callback.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -58,6 +70,8 @@ globs: *
     *   The `.env` file format should be `ADMIN_USER_IDS=392817811` (no quotes, no spaces around the `=`).
     *   Check the logs at startup to verify what admin IDs were loaded.
     *   When attempting the command, check the logs to see what user ID is being checked and what admin IDs are configured.
+*   If the callback data exceeds Telegram's 64-byte limit, store the data in Redis using the `SessionManager` and pass only the UUID in the callback.
+*   When editing the photo message caption in `handlers/admin_autocard.py` with `edit_text`, ensure that the `chat_id` and `message_id` are correctly passed and that the caption is properly formatted and escaped. The handlers `handle_autocard_cancel` and `handle_autocard_approve` should be reviewed for potential issues.
 
 ## INFRASTRUCTURE
 
@@ -65,6 +79,12 @@ globs: *
 *   Docker container must wait for Postgres and Redis to be healthy before starting the bot. This can be achieved through health checks in `docker-compose.yml` and/or retry logic in the Python startup code.
 *   Use named volumes for `pg_data` and `redis_data` to persist data.
 *   Dockerfile: The `CMD` instruction should be `CMD ["python", "main.py"]` to correctly start the bot application.
+*   To make the `data/chat_exports` folder accessible from the container, add a volume mount in `docker-compose.yml` to mount the directory on the host to `/app/data/chat_exports` inside the container:
+    ```yaml
+    volumes:
+      - ./data/chat_exports:/app/data/chat_exports
+    ```
+    *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
 
 ## REDIS
 
@@ -81,6 +101,10 @@ globs: *
     *   `get_claim_owner()` - check who claimed a drop
     *   `close()` - cleanup connection
 *   Implement `services/session_manager.py` to manage trade and battle sessions.
+*   The `SessionManager` should also include methods for storing and retrieving blueprint data for autocard flows, using UUIDs as keys. These methods are:
+    *   `store_blueprint(blueprint_data: dict, ttl: int = 3600) -> str`: Stores blueprint data in Redis for autocard callbacks.
+    *   `get_blueprint(blueprint_id: str) -> Optional[dict]`: Gets blueprint data from Redis.
+    *   `delete_blueprint(blueprint_id: str) -> bool`: Deletes blueprint data from Redis.
 
 ## MIDDLEWARE
 
@@ -112,6 +136,10 @@ globs: *
 *   Create `handlers/admin.py` to handle admin commands.
     *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
     *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
+    *   `/import_chat <filename>` - Import chat history from Telegram JSON export.
+    *   **Usage**:
+        1.  Place the `result.json` file in `data/chat_exports/`
+        2.  Run `/import_chat result.json` in the bot.
 *   Implement a Callback Query Handler for data `claim_drop`.
 *   Call `DropManager.try_claim_drop(message.message_id, user.id)`.
     *   **If Success**:
@@ -132,28 +160,38 @@ globs: *
         *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return a relative filepath to saved image.
         *   The flow continues even if image generation fails (image_url can be None), allowing cards to be created without images if needed.
 *   Implement `handlers/admin_autocard.py`.
-    *   Command: `/autocard` (reply to a user's message to target them).
+    *   Command: `/autocard`
+    *   Supports three modes:
+        *   Reply mode: `/autocard` (reply to a message)
+        *   Username mode: `/autocard @username`
+        *   UserID mode: `/autocard 392817811`
     *   **Logic Flow (Async):**
-        1.  **Trigger**: Admin replies `/autocard` to a user message.
+        1.  **Trigger**: Admin replies `/autocard` to a user message, or uses `/autocard @username` or `/autocard userID`.
         2.  **Feedback**: Bot sends "🕵️‍♂️ Аналізую особистість [User]..." (Analyzing personality...).
         3.  **Fetch Context**:
             *   DB Query: Select last 50 messages from `MessageLog` for this `target_user_id`.
             *   Flatten into a list of strings.
         4.  **Architect Step**:
             *   Bot edits message: "🧠 Проєктую архітектуру картки..." (Designing card architecture...).
-            *   Call `CardArchitectService.generate_blueprint(logs, target_user_id)`. Pass the `target_user_id` to the service.
+            *   Call `CardArchitectService.generate_blueprint(logs, target_user_id, target_user_name)`. Pass the `target_user_id` and `target_user_name` to the service.
         5.  **Art Forge Step**:
             *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in нано-горні...).
             *   Call `ArtForgeService.forge_card_image(blueprint.raw_image_prompt_en, blueprint.biome)`.
         6.  **Preview & Confirmation**:
             *   Bot deletes status message.
-            *   Send Photo (the generated image) with caption formatted using `blueprint` data (Name, Stats, Lore, Biome emoji).
+            *   Send Photo (the generated image) with caption formatted using `blueprint` data (Name, Stats, Lore, Biome emoji). Use `FSInputFile` to send local files.
             *   Attach Inline Keyboard: "✅ Затвердити та Видати" (Approve & Issue) or "❌ Скасувати".
         7.  **Finalize (On Button Click)**:
             *   Save `CardTemplate` to DB.
             *   Create `UserCard` for the target user instantly.
             *   Edit message: "🎉 Картку [Card Name] створено та видано [User]!"
+    *   The `escape_markdown()` function from `utils.text` should be used when sending the initial feedback message with the user's display name.
     *   **User Creation**: The `admin_autocard.py` handler automatically creates a User record if one doesn't exist when awarding a card.
+    *   **Usage**:
+        *   `/autocard` - Reply to a user's message (existing behavior)
+        *   `/autocard @username` - Use username
+        *   `/autocard 392817811` - Use userID
+    *   Due to Telegram's 64-byte limit on callback data, store the blueprint data in Redis using the `SessionManager` and pass only the UUID in the callback.
 *   Create `handlers/player.py` to handle player commands.
     *   Implement `/start` handler that:
         *   Gets or creates User record using pattern from `handlers/drops.py`.
@@ -205,6 +243,14 @@ globs: *
     *   Regular users see only player commands.
     *   Admin users see both player and admin commands.
     *   Commands are set at bot startup and dynamically when admin users interact.
+*   Add a new admin command `/createcommoncard` that creates reusable card templates using AI generation from a detailed prompt.
+    *   The AI should understand it's creating a common/meme card (like "Шлюхобот")
+    *   Support ALL rarities (Common, Rare, Epic, Legendary, Mythic) - AI should choose appropriate rarity based on prompt, or admin can specify
+    *   The AI should understand it's creating a reusable template card (not user-specific)
+    *   For meme cards like "Шлюхобот", AI should typically choose Common or Rare rarity unless specified otherwise
+    *   **Usage**: `/createcommoncard <detailed prompt>` (optionally with rarity hint)
+        *   Example: `/createcommoncard Шлюхобот - вульгарний мемний робот з техно біому, низька рідкість`
+    *   The AI architect service already supports all rarities in its system prompt
 
 ## DATABASE
 
@@ -246,7 +292,7 @@ globs: *
 *   Create `services/cleanup.py` with daily cleanup job.
     *   **Logic**: `DELETE FROM message_logs WHERE created_at < now() - INTERVAL '7 days'`.
     *   This keeps the database lean, only keeping recent context for generation.
-    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
+    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`s natural termination if it yields only once.
 
 ## MAIN APPLICATION
 
@@ -287,14 +333,12 @@ globs: *
         *   `raw_image_prompt_en`: str (Descriptive prompt for visual elements only)
     *   **Class `CardArchitectService`**:
         *   Init with `GEMINI_API_KEY`.
-        *   Method `generate_blueprint(user_context_logs: list[str]) -> CardBlueprint`:
+        *   Method `generate_blueprint(user_context_logs: list[str], target_user_id: Optional[int] = None, user_name: Optional[str] = None) -> CardBlueprint`:
             *   **System Instruction**: Convert the "Gemini Gem" prompt provided earlier into a Python string. Crucially, emphasize the output must be valid JSON matching the `CardBlueprint` schema.
             *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content` and `generation_config={"response_mime_type": "application/json"}`. Sticking to the default thinking level (which is usually "Dynamic" for Flash 3) is safer for now to avoid 400 Bad Request errors.
             *   **Note**: Using default thinking level for Gemini 3 Flash (usually "Dynamic") to avoid 400 Bad Request errors until SDK fully supports explicit `thinking_config`.
             *   **Parsing**: Use `CardBlueprint.model_validate_json(response.text)` to ensure robust parsing.
             *   **Error Handling**: Catch validation errors and retry once if Gemini hallucinates the schema.
-            *   **Call Gemini**: Use `gemini-3-flash-preview` with `client.models.generate_content`.
-            *   Use unified SDK with v1.56+ features: native Pydantic support and thinking config
             *   ```python
                             response = self._client.models.generate_content(
                                 model=self._model_id,
@@ -328,15 +372,19 @@ globs: *
         *   Init with `GEMINI_API_KEY` and store pass for `media/cards/` directory.
         *   Method `forge_card_image(blueprint_prompt: str, biome: BiomeType) -> str (filepath)`:
             *   **Combine Prompt**: f"{UNIFORM_STYLE_GUIDE}. Subject: {blueprint_prompt}. Biome theme: {biome.value}."
-            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(response_modalities=["IMAGE"], safety_settings=[types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_ONLY_HIGH"], aspect_ratio="3:4").
+            *   **Call API**: Use the Gemini Image Generation model (`gemini-3-pro-image-preview`) and `client.models.generate_content` with `config=types.GenerateContentConfig(imageConfig=types.ImageConfig(aspectRatio="3:4",imageSize="2K",),safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_HARASSMENT",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT",threshold="BLOCK_ONLY_HIGH"),types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT",threshold="BLOCK_ONLY_HIGH")]).
             *   **Save**: Save resulting binary to `media/cards/{uuid4()}.png`.
             *   **Return**: Relative path to the saved image.
             *   **Error Handling**: Handle rate limits with exponential backoff.
+            *   **Safety Settings**: Allows mild vulgar/meme content while blocking extreme NSFW content.
+                *   All safety categories (`HARM_CATEGORY_HATE_SPEECH`, `HARM_CATEGORY_HARASSMENT`, `HARM_CATEGORY_SEXUALLY_EXPLICIT`, `HARM_CATEGORY_DANGEROUS_CONTENT`) are set to `BLOCK_ONLY_HIGH`.
+    *   **Note**: The `aspect_ratio` parameter is not supported in the current Gemini SDK version and the model will generate an appropriate aspect ratio automatically.
 *   Create `services/nano_banana.py`.
     *   Inherits from `ArtForgeService` to maintain style consistency.
     *   Provides `generate_from_prompt()` method for manual flows.
     *   Uses the same underlying generation logic as `ArtForgeService`.
 *   Create `services/battle_engine.py` with battle calculation logic (stats, biome bonuses, RNG, MEME crits)
+*   Create `services/chat_import.py` to import chat history from Telegram JSON exports.
 
 ## UTILS
 
@@ -372,9 +420,9 @@ globs: *
 
 *   Implement a full keyboard system with:
     *   Reply Keyboards (persistent buttons): Main menu navigation
-    *   Inline Keyboards: Inventory browsing, card details, pagination, and actions
+    *   Inline Keyboards: Inventory browsing, card details, and actions
 *   Reply Keyboards (persistent buttons): Main menu navigation
-*   Inline Keyboards: Inventory browsing, card details, pagination, and actions
+*   Inline Keyboards: Inventory browsing, card details, and actions
 *   Menu Structure:
     *   Main Menu (Reply Keyboard)
         *   📊 Профіль (Profile)
@@ -389,7 +437,4 @@ globs: *
     *   Card Detail View (Inline Keyboard)
         *   Navigation: ⬅️ Попередня / Наступна ➡️
         *   🔙 До Колекції (Back to Inventory)
-        *   🔩 Розпилити (Отримати Рештки) - Scraps the card.
-
-*   Main Menu Items: 📊 Профіль (Profile/Stats), 🎴 Колекція (Inventory/Cards), ❓ Допомога (Help).
-*   Inventory Display: Paginated list (e.g., 5-10 cards per page with Next/Prev buttons)
+        *   🔩 Розпилити (Отримати Ре

@@ -33,6 +33,7 @@ def get_admin_commands() -> list[BotCommand]:
     return [
         BotCommand(command="newcard", description="Створити нову картку вручну"),
         BotCommand(command="autocard", description="Автоматично створити картку з повідомлення користувача"),
+        BotCommand(command="createcommoncard", description="Створити шаблон картки через AI з опису"),
     ]
 
 

@@ -33,8 +33,7 @@ async def _log_message(user_id: int, chat_id: int, content: str) -> None:
                     error=str(e),
                     exc_info=True,
                 )
-            finally:
-                break
+            break
     except Exception as e:
         logger.error(
             "Error in message logging task",

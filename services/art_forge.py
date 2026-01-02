@@ -159,16 +159,32 @@ class ArtForgeService:
                 model=self._model_id,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    # Explicitly request IMAGE modality (SDK 1.56 feature)
-                    response_modalities=["IMAGE"],
+                    # Image configuration for gemini-3-pro-image-preview
+                    # See: https://ai.google.dev/gemini-api/docs/image-generation
+                    imageConfig=types.ImageConfig(
+                        aspectRatio="3:4",  # Portrait orientation for trading cards
+                        imageSize="2K",     # 1792x2400 resolution for 3:4 aspect ratio
+                    ),
+                    # Safety settings: Allow mild vulgar/meme content but block extreme NSFW
+                    # BLOCK_ONLY_HIGH allows suggestive/meme content while blocking explicit material
                     safety_settings=[
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_HATE_SPEECH",
+                            threshold="BLOCK_ONLY_HIGH"
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_HARASSMENT",
+                            threshold="BLOCK_ONLY_HIGH"
+                        ),
                         types.SafetySetting(
                             category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
                             threshold="BLOCK_ONLY_HIGH"
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                            threshold="BLOCK_ONLY_HIGH"
                         )
-                    ],
-                    # "Nano Banana Pro" supports standard aspect ratios
-                    aspect_ratio="3:4"
+                    ]
                 )
             )
 

@@ -61,7 +61,6 @@ class ChatTrackingMiddleware(BaseMiddleware):
                         error=str(e),
                         exc_info=True,
                     )
-                finally:
-                    break
+                break
 
         return await handler(event, data)
