@@ -2,14 +2,15 @@
 
 from typing import Any, Awaitable, Callable
 
-from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram import BaseMiddleware, Bot
+from aiogram.types import BotCommandScopeChat, CallbackQuery, Message, TelegramObject
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from database.models import User
 from database.session import get_session
 from logging_config import get_logger
+from utils.commands import get_all_commands, is_admin
 
 logger = get_logger(__name__)
 
@@ -74,5 +75,25 @@ class UserRegistrationMiddleware(BaseMiddleware):
                     )
                 finally:
                     break
+
+            # Set admin commands if user is admin
+            if is_admin(user.id):
+                try:
+                    bot: Bot = data.get("bot")
+                    if bot:
+                        await bot.set_my_commands(
+                            commands=get_all_commands(),
+                            scope=BotCommandScopeChat(chat_id=user.id),
+                        )
+                        logger.debug(
+                            "Admin commands set for user",
+                            user_id=user.id,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to set admin commands",
+                        user_id=user.id,
+                        error=str(e),
+                    )
 
         return await handler(event, data)

@@ -1,7 +1,10 @@
+import logging
 from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -45,16 +48,38 @@ class Settings(BaseSettings):
 
     @field_validator("admin_user_ids", mode="before")
     @classmethod
-    def parse_admin_user_ids(cls, v: str | list[int] | None) -> list[int]:
+    def parse_admin_user_ids(cls, v: str | int | list[int] | None) -> list[int]:
         """Parse comma-separated string of user IDs into list."""
         if v is None:
+            logger.debug("ADMIN_USER_IDS is None, returning empty list")
             return []
         if isinstance(v, list):
+            logger.debug(f"ADMIN_USER_IDS is already a list: {v}")
             return v
+        if isinstance(v, int):
+            logger.debug(f"ADMIN_USER_IDS is a single int: {v}")
+            return [v]
         if isinstance(v, str):
-            if not v.strip():
+            logger.debug(f"ADMIN_USER_IDS raw string value: {repr(v)}")
+            # Remove quotes if present and strip whitespace
+            v = v.strip().strip('"').strip("'")
+            if not v:
+                logger.debug("ADMIN_USER_IDS is empty after stripping, returning empty list")
                 return []
-            return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+            # Split by comma and convert to int, filtering out empty strings
+            result = []
+            for uid in v.split(","):
+                uid_clean = uid.strip().strip('"').strip("'")
+                if uid_clean:
+                    try:
+                        result.append(int(uid_clean))
+                    except ValueError as e:
+                        # Skip invalid entries but don't fail completely
+                        logger.warning(f"Invalid admin user ID '{uid_clean}': {e}")
+                        continue
+            logger.info(f"Parsed ADMIN_USER_IDS: {result}")
+            return result
+        logger.warning(f"ADMIN_USER_IDS has unexpected type: {type(v)}")
         return []
 
     @property

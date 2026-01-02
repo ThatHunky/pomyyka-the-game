@@ -5,24 +5,34 @@ from uuid import UUID
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from database.enums import BiomeType, Rarity
 from database.models import CardTemplate, User, UserCard
 from database.session import get_session
 from logging_config import get_logger
+from utils.emojis import get_biome_emoji, get_rarity_emoji
 from utils.keyboards import (
     CardViewCallback,
     InventoryCallback,
     NavigationCallback,
+    ScrapCardCallback,
     StatsCallback,
     get_card_detail_keyboard,
     get_help_keyboard,
     get_inventory_keyboard,
+    get_main_menu_inline_keyboard,
     get_main_menu_keyboard,
     get_profile_keyboard,
+    get_scrap_confirm_keyboard,
     get_stats_keyboard,
 )
 from utils.text import escape_markdown
@@ -61,30 +71,6 @@ async def safe_edit_text(
             raise
 
 
-def get_biome_emoji(biome: BiomeType) -> str:
-    """Get emoji for biome type."""
-    emoji_map = {
-        BiomeType.NORMAL: "🌍",
-        BiomeType.FIRE: "🔥",
-        BiomeType.WATER: "💧",
-        BiomeType.GRASS: "🌿",
-        BiomeType.PSYCHIC: "🔮",
-        BiomeType.TECHNO: "⚙️",
-        BiomeType.DARK: "🌑",
-    }
-    return emoji_map.get(biome, "🌍")
-
-
-def get_rarity_emoji(rarity: Rarity) -> str:
-    """Get emoji for rarity type."""
-    emoji_map = {
-        Rarity.COMMON: "⚪",
-        Rarity.RARE: "🔵",
-        Rarity.EPIC: "🟣",
-        Rarity.LEGENDARY: "🟠",
-        Rarity.MYTHIC: "🔴",
-    }
-    return emoji_map.get(rarity, "⚪")
 
 
 @router.message(Command("start"))
@@ -443,13 +429,11 @@ async def handle_menu_navigation(callback: CallbackQuery) -> None:
         await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
         return
 
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         "🏠 **Головне меню**\n\n" "Оберіть дію з меню нижче:",
         parse_mode="Markdown",
-    )
-    await callback.message.answer(
-        "Використовуй кнопки внизу для навігації:",
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_inline_keyboard(),
     )
     await callback.answer()
 
@@ -552,6 +536,46 @@ async def handle_inventory_navigation(callback: CallbackQuery) -> None:
 async def handle_stats_navigation(callback: CallbackQuery) -> None:
     """Handle stats navigation callback."""
     await _show_stats(callback)
+
+
+@router.callback_query(NavigationCallback.filter(F.action == "help"))
+async def handle_help_navigation(callback: CallbackQuery) -> None:
+    """Handle help navigation callback."""
+    if not callback.message:
+        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        return
+
+    help_text = (
+        "❓ **Допомога**\n\n"
+        "🎮 **Хроніки Помийки** - гра-колекціонер карток у Telegram!\n\n"
+        "**Основні команди:**\n"
+        "• /start - Реєстрація/початок\n"
+        "• /menu - Головне меню\n"
+        "• /profile або /me - Твій профіль\n"
+        "• /inventory - Твоя колекція карток\n"
+        "• /stats - Детальна статистика\n"
+        "• /help - Ця довідка\n\n"
+        "**Як грати:**\n"
+        "1️⃣ Сиди в чаті та спілкуйся\n"
+        "2️⃣ Іноді з'являються аномалії з картками\n"
+        "3️⃣ Тисни **✋ Хапнути** швидше за інших\n"
+        "4️⃣ Збирай унікальну колекцію!\n\n"
+        "**Типи карток:**\n"
+        "⚪ Common - Звичайні\n"
+        "🔵 Rare - Рідкісні\n"
+        "🟣 Epic - Епічні\n"
+        "🟠 Legendary - Легендарні\n"
+        "🔴 Mythic - Міфічні\n\n"
+        "Бажаємо удачі у зборі карток! 🎴"
+    )
+
+    await safe_edit_text(
+        callback.message,
+        help_text,
+        parse_mode="Markdown",
+        reply_markup=get_help_keyboard(),
+    )
+    await callback.answer()
 
 
 @router.callback_query(InventoryCallback.filter())
@@ -686,9 +710,13 @@ async def handle_card_view(
             card_text += f"{biome_emoji} **Біом:** {escape_markdown(template.biome_affinity.value)}\n"
             card_text += f"⚔️ **АТАКА:** {stats.get('atk', 0)}\n"
             card_text += f"🛡️ **ЗАХИСТ:** {stats.get('def', 0)}\n"
+            if 'meme' in stats:
+                card_text += f"🎭 **МЕМНІСТЬ:** {stats.get('meme', 0)}\n"
             card_text += f"{rarity_emoji} **Рідкість:** {escape_markdown(template.rarity.value)}\n"
 
-            keyboard = get_card_detail_keyboard(return_page=callback_data.return_page)
+            keyboard = get_card_detail_keyboard(
+                card_id=str(user_card.id), return_page=callback_data.return_page
+            )
 
             # Try to send photo if image exists
             if template.image_url:
@@ -822,4 +850,194 @@ async def _show_stats(callback: CallbackQuery) -> None:
                 exc_info=True,
             )
             await callback.answer("❌ Помилка", show_alert=True)
+            break
+
+
+def get_scrap_reward(rarity: Rarity) -> int:
+    """
+    Calculate scrap reward based on card rarity.
+
+    Args:
+        rarity: Card rarity level
+
+    Returns:
+        Amount of scraps to award
+    """
+    reward_map = {
+        Rarity.COMMON: 5,
+        Rarity.RARE: 30,
+        Rarity.EPIC: 75,
+        Rarity.LEGENDARY: 500,
+        Rarity.MYTHIC: 1000,
+    }
+    return reward_map.get(rarity, 5)
+
+
+@router.callback_query(ScrapCardCallback.filter(F.confirm == False))
+async def handle_scrap_card_request(
+    callback: CallbackQuery, callback_data: ScrapCardCallback
+) -> None:
+    """Handle initial scrap card request (show confirmation)."""
+    if not callback.message:
+        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        return
+
+    user = callback.from_user
+    if not user:
+        await callback.answer("Помилка", show_alert=True)
+        return
+
+    try:
+        card_id = UUID(callback_data.card_id)
+    except ValueError:
+        await callback.answer("❌ Невірний ID картки", show_alert=True)
+        return
+
+    async for session in get_session():
+        try:
+            card_stmt = (
+                select(UserCard)
+                .where(UserCard.id == card_id, UserCard.user_id == user.id)
+                .options(selectinload(UserCard.template))
+            )
+            result = await session.execute(card_stmt)
+            user_card = result.scalar_one_or_none()
+
+            if not user_card:
+                await callback.answer("❌ Картка не знайдена", show_alert=True)
+                break
+
+            template = user_card.template
+            reward = get_scrap_reward(template.rarity)
+            rarity_emoji = get_rarity_emoji(template.rarity)
+
+            confirm_text = (
+                f"⚠️ **Підтвердження розпилення**\n\n"
+                f"Ти збираєшся розпилити картку:\n"
+                f"{rarity_emoji} **{escape_markdown(template.name)}**\n\n"
+                f"🔩 Ти отримаєш: **{reward} Решток**\n\n"
+                f"❌ **Увага:** Цю дію неможливо скасувати!"
+            )
+
+            keyboard = get_scrap_confirm_keyboard(
+                card_id=callback_data.card_id, return_page=callback_data.return_page
+            )
+
+            await safe_edit_text(
+                callback.message,
+                confirm_text,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            await callback.answer()
+            break
+
+        except Exception as e:
+            logger.error(
+                "Error in scrap card request",
+                user_id=user.id,
+                card_id=str(card_id),
+                error=str(e),
+                exc_info=True,
+            )
+            await callback.answer("❌ Помилка", show_alert=True)
+            break
+
+
+@router.callback_query(ScrapCardCallback.filter(F.confirm == True))
+async def handle_scrap_card_confirm(
+    callback: CallbackQuery, callback_data: ScrapCardCallback
+) -> None:
+    """Handle confirmed card scrapping (delete card and award scraps)."""
+    if not callback.message:
+        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        return
+
+    user = callback.from_user
+    if not user:
+        await callback.answer("Помилка", show_alert=True)
+        return
+
+    try:
+        card_id = UUID(callback_data.card_id)
+    except ValueError:
+        await callback.answer("❌ Невірний ID картки", show_alert=True)
+        return
+
+    async for session in get_session():
+        try:
+            # Get card with template and user
+            card_stmt = (
+                select(UserCard)
+                .where(UserCard.id == card_id, UserCard.user_id == user.id)
+                .options(selectinload(UserCard.template), selectinload(UserCard.user))
+            )
+            result = await session.execute(card_stmt)
+            user_card = result.scalar_one_or_none()
+
+            if not user_card:
+                await callback.answer("❌ Картка не знайдена", show_alert=True)
+                break
+
+            template = user_card.template
+            db_user = user_card.user
+            reward = get_scrap_reward(template.rarity)
+            rarity_emoji = get_rarity_emoji(template.rarity)
+            card_name = template.name
+
+            # Delete card and update balance
+            delete_stmt = delete(UserCard).where(UserCard.id == card_id)
+            await session.execute(delete_stmt)
+
+            # Update user balance
+            db_user.balance += reward
+            session.add(db_user)
+
+            await session.commit()
+
+            success_text = (
+                f"✅ **Картку розпилено!**\n\n"
+                f"{rarity_emoji} **{escape_markdown(card_name)}** було знищено.\n\n"
+                f"🔩 Ти отримав: **{reward} Решток**\n"
+                f"💰 Твій баланс: **{db_user.balance} Решток**"
+            )
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="◀️ Назад до колекції",
+                            callback_data=InventoryCallback(
+                                page=callback_data.return_page
+                            ).pack(),
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="🏠 Головне меню",
+                            callback_data=NavigationCallback(action="menu").pack(),
+                        ),
+                    ],
+                ]
+            )
+
+            await safe_edit_text(
+                callback.message,
+                success_text,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            await callback.answer(f"✅ Отримано {reward} Решток!")
+            break
+
+        except Exception as e:
+            logger.error(
+                "Error in scrap card confirm",
+                user_id=user.id,
+                card_id=str(card_id),
+                error=str(e),
+                exc_info=True,
+            )
+            await session.rollback()
+            await callback.answer("❌ Помилка при розпиленні картки", show_alert=True)
             break

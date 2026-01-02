@@ -57,6 +57,9 @@ async def check_admin(message: Message) -> bool:
             "Admin command attempted by non-admin user",
             user_id=user_id,
             username=message.from_user.username,
+            admin_user_ids=settings.admin_user_ids,
+            admin_user_ids_type=[type(uid).__name__ for uid in settings.admin_user_ids],
+            user_id_type=type(user_id).__name__,
         )
         await message.answer("❌ У вас немає прав доступу до цієї команди.")
         return False

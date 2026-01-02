@@ -35,6 +35,52 @@ class StatsCallback(CallbackData, prefix="stats"):
     section: str  # "main", "rarity", "biome", "refresh"
 
 
+class ScrapCardCallback(CallbackData, prefix="scrap"):
+    """Callback data for scrapping (deleting) cards."""
+
+    card_id: str  # UUID as string
+    return_page: int = 0  # Page to return to in inventory
+    confirm: bool = False  # Whether this is a confirmation step
+
+
+class TradeProposeCallback(CallbackData, prefix="trade_propose"):
+    """Callback data for proposing a trade."""
+
+    session_id: str  # Trade session ID
+
+
+class TradeConfirmCallback(CallbackData, prefix="trade_confirm"):
+    """Callback data for confirming a trade."""
+
+    session_id: str  # Trade session ID
+
+
+class TradeCancelCallback(CallbackData, prefix="trade_cancel"):
+    """Callback data for cancelling a trade."""
+
+    session_id: str  # Trade session ID
+
+
+class DuelAcceptCallback(CallbackData, prefix="duel_accept"):
+    """Callback data for accepting/rejecting a duel challenge."""
+
+    session_id: str  # Battle session ID
+    accept: bool  # True to accept, False to reject
+
+
+class DuelStakeCallback(CallbackData, prefix="duel_stake"):
+    """Callback data for setting duel stake."""
+
+    session_id: str  # Battle session ID
+    stake: int  # Stake amount in scraps
+
+
+class DuelConfirmStakeCallback(CallbackData, prefix="duel_confirm_stake"):
+    """Callback data for confirming duel stake."""
+
+    session_id: str  # Battle session ID
+
+
 def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """Create main menu Reply keyboard."""
     return ReplyKeyboardMarkup(
@@ -50,6 +96,34 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         persistent=True,
+    )
+
+
+def get_main_menu_inline_keyboard() -> InlineKeyboardMarkup:
+    """Create main menu inline keyboard for message editing."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📊 Профіль",
+                    callback_data=NavigationCallback(action="profile").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="🎴 Колекція",
+                    callback_data=NavigationCallback(action="inventory").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📈 Статистика",
+                    callback_data=NavigationCallback(action="stats").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="❓ Допомога",
+                    callback_data=NavigationCallback(action="help").pack(),
+                ),
+            ],
+        ]
     )
 
 
@@ -156,28 +230,75 @@ def get_inventory_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_card_detail_keyboard(return_page: int = 0) -> InlineKeyboardMarkup:
+def get_card_detail_keyboard(
+    card_id: str, return_page: int = 0, show_scrap: bool = True
+) -> InlineKeyboardMarkup:
     """
     Create card detail view inline keyboard.
 
     Args:
+        card_id: UUID of the card as string
         return_page: Page number to return to in inventory
+        show_scrap: Whether to show the scrap button
 
     Returns:
         InlineKeyboardMarkup with navigation buttons
+    """
+    buttons = []
+    
+    if show_scrap:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔩 Розпилити (Отримати Рештки)",
+                callback_data=ScrapCardCallback(
+                    card_id=card_id, return_page=return_page, confirm=False
+                ).pack(),
+            ),
+        ])
+    
+    buttons.extend([
+        [
+            InlineKeyboardButton(
+                text="◀️ Назад до колекції",
+                callback_data=InventoryCallback(page=return_page).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏠 Головне меню",
+                callback_data=NavigationCallback(action="menu").pack(),
+            ),
+        ],
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_scrap_confirm_keyboard(card_id: str, return_page: int = 0) -> InlineKeyboardMarkup:
+    """
+    Create confirmation keyboard for card scrapping.
+
+    Args:
+        card_id: UUID of the card as string
+        return_page: Page number to return to in inventory
+
+    Returns:
+        InlineKeyboardMarkup with confirmation buttons
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="◀️ Назад до колекції",
-                    callback_data=InventoryCallback(page=return_page).pack(),
+                    text="✅ Так, розпилити",
+                    callback_data=ScrapCardCallback(
+                        card_id=card_id, return_page=return_page, confirm=True
+                    ).pack(),
                 ),
-            ],
-            [
                 InlineKeyboardButton(
-                    text="🏠 Головне меню",
-                    callback_data=NavigationCallback(action="menu").pack(),
+                    text="❌ Скасувати",
+                    callback_data=CardViewCallback(
+                        card_id=card_id, return_page=return_page
+                    ).pack(),
                 ),
             ],
         ]

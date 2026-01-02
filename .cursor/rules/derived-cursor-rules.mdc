@@ -30,6 +30,7 @@ globs: *
 
 *   `.env.example`: Contains example environment variables: `BOT_TOKEN` (required), `DB_URL` (required), `REDIS_URL` (required), `GEMINI_API_KEY` (optional, bot can run without it), `LOCALE` (defaults to "uk"), `ADMIN_USER_IDS` (comma-separated list of Telegram user IDs, for admin authentication).
 *   Context: Using the "Gemini 3.0" feature set which requires the 1.56 SDK.
+*   Game Design Document (GDD): `plan-doc.md` - a complete map of mechanics, economics, and logic, which combines already written code with new ideas (trading, currency, battles).
 
 ## CODING STANDARDS
 
@@ -39,10 +40,24 @@ globs: *
 *   When tracking group chats in `middlewares/group_tracker.py`, use PostgreSQL's `INSERT ON CONFLICT DO NOTHING` to prevent errors when the bot joins a group it has already been in.
 *   All Admin prompts should be in Ukrainian.
 *   Escape special Markdown V2 characters in user-provided content (card names, usernames, rarity/biome values, user first names) to prevent parsing errors. Use `utils/text.py` with `escape_markdown()`.
+*   The bot should primarily edit messages instead of sending new ones to reduce spam. Callback handlers should only edit existing messages, never send new ones.
+*   When parsing `ADMIN_USER_IDS` from the environment variables, the validator in `config.py` must handle:
+    *   Quoted values (`"392817811"` or `'392817811'`)
+    *   Extra whitespace
+    *   Invalid entries (log a warning instead of failing)
 
 ## WORKFLOW & RELEASE RULES
 
+*   Bot should primarily edit messages instead of sending new ones to reduce spam.
+*   If running the bot in Docker, restart the container after changing environment variables for the changes to take effect. Use `docker-compose restart bot` or `docker-compose up -d --build bot`.
+
 ## DEBUGGING
+
+*   `EditMessageText` expects `InlineKeyboardMarkup`, but a `ReplyKeyboardMarkup` is being passed. Editing messages only supports inline keyboards. Ensure that `safe_edit_text()` and Telegram's `edit_text()` are called with `InlineKeyboardMarkup` when editing messages.
+*   When debugging admin command access, check the following:
+    *   The `.env` file format should be `ADMIN_USER_IDS=392817811` (no quotes, no spaces around the `=`).
+    *   Check the logs at startup to verify what admin IDs were loaded.
+    *   When attempting the command, check the logs to see what user ID is being checked and what admin IDs are configured.
 
 ## INFRASTRUCTURE
 
@@ -65,6 +80,7 @@ globs: *
     *   `release_drop()` - manual cleanup
     *   `get_claim_owner()` - check who claimed a drop
     *   `close()` - cleanup connection
+*   Implement `services/session_manager.py` to manage trade and battle sessions.
 
 ## MIDDLEWARE
 
@@ -83,6 +99,7 @@ globs: *
     *   Implement `middlewares/user_registration.py` to automatically register users on any interaction (messages, callback queries, etc.).
     *   Register the middleware for both `message` and `callback_query` events.
     *   Uses PostgreSQL `ON CONFLICT DO NOTHING` for thread-safe registration.
+    *   After user registration, check if user is admin. If admin, set their commands to include admin commands using `Bot.set_my_commands()`, `BotCommandScopeChat(chat_id=user_id)`, and `get_all_commands()`.
 
 ## HANDLERS
 
@@ -163,6 +180,31 @@ globs: *
     *   **User Registration**: User registration should be triggered on *any* interaction, not just specific commands like `/start`.
         *   **Implementation**: Modify the `get_or_create_user` function or equivalent to be called in a middleware that intercepts all messages.
         *   Now handled by `middlewares/user_registration.py`
+    *   **Card Scrapping:**
+        *   Implement `handle_scrap_card_request()` to show the scrapping confirmation message and reward amount.
+        *   Implement `handle_scrap_card_confirm()` to delete the card and award scraps to the user.
+        *   Implement `get_scrap_reward()` to calculate the scrap reward based on card rarity.
+    *   **Main Menu Navigation**: Use inline keyboards for main menu navigation when editing messages.
+        *   Implement `get_main_menu_inline_keyboard()` in `utils/keyboards.py` to return an `InlineKeyboardMarkup` with the main menu options.
+        *   Update `handle_menu_navigation` in `handlers/player.py` to use `get_main_menu_inline_keyboard()`.
+        *   Implement callback query handlers for all navigation actions ("profile", "inventory", "stats", "help").
+*   Create `handlers/inline.py` to handle inline queries for player interactions (trading, battles, etc.).
+    *   `handle_inline_query()` - main menu on `@botname` call:
+        *   Trading
+        *   Duel challenge
+        *   Profile view
+        *   Card collection
+    *   Card search by name.
+    *   `handle_chosen_inline_result()` - placeholder for session management.
+*   Extract trading logic into separate handler file: `handlers/trading.py`
+    *   All trade-related callback handlers
+    *   Trade execution logic with atomic transactions
+    *   Validation (card ownership, session expiry)
+*   Create `handlers/battles.py` with full battle flow: challenge, accept, stake, deck selection, battle execution
+*   Command hints (descriptions) are implemented for all bot commands using Telegram's `setMyCommands` API.
+    *   Regular users see only player commands.
+    *   Admin users see both player and admin commands.
+    *   Commands are set at bot startup and dynamically when admin users interact.
 
 ## DATABASE
 
@@ -211,7 +253,7 @@ globs: *
 *   Create `main.py` as application entry point that:
     *   Initializes logging and database.
     *   Creates Bot and Dispatcher instances.
-    *   Registers routers (drops router, admin router, admin_autocard router, player router).
+    *   Registers routers (drops router, admin router, admin_autocard router, player router, inline router).
     *   Registers middlewares (ChatTrackingMiddleware, MessageLoggingMiddleware) - order matters.
     *   Initializes and starts the scheduler on startup.
     *   Handles cleanup on shutdown.
@@ -219,6 +261,15 @@ globs: *
     *   Ensure the startup sequence wraps the `await bot.delete_webhook()` call in a try/except block. If the bot was previously running on a webhook, this can crash the polling startup.
     *   Log admin configuration at startup: Log the number of admins configured and whether admin functionality is enabled.
     *   Register `UserRegistrationMiddleware` for both `message` and `callback_query` events to ensure users are automatically registered on any interaction.
+    *   Implements command hints (descriptions) for all bot commands.
+        *   Regular users will see hints for player commands only.
+        *   Admins will see hints for both player and admin commands.
+        *   Uses `utils/commands.py` to centralize command definitions
+        *   Uses `Bot.set_my_commands()` from aiogram for setting commands
+        *   Uses `BotCommandScopeDefault()` for default (all users) scope
+        *   Uses `BotCommandScopeChat(chat_id=user_id)` for per-user scope
+        *   Sets admin commands asynchronously after bot initialization
+        *   Handles errors gracefully (log but don't fail startup)
 
 ## AI SERVICES
 
@@ -285,6 +336,7 @@ globs: *
     *   Inherits from `ArtForgeService` to maintain style consistency.
     *   Provides `generate_from_prompt()` method for manual flows.
     *   Uses the same underlying generation logic as `ArtForgeService`.
+*   Create `services/battle_engine.py` with battle calculation logic (stats, biome bonuses, RNG, MEME crits)
 
 ## UTILS
 
@@ -296,12 +348,25 @@ globs: *
         *   Returns the relative filepath.
 *   Create `utils/keyboards.py` for keyboard creation.
     *   `get_main_menu_keyboard()` - Reply keyboard with main menu options
+    *   `get_main_menu_inline_keyboard()` - Inline keyboard for main menu options
     *   `get_inventory_keyboard()` - Inline keyboard for inventory with pagination
     *   `get_card_detail_keyboard()` - Inline keyboard for viewing individual cards
     *   `get_profile_keyboard()` - Inline keyboard for profile/stats
     *   `get_help_keyboard()` - Inline keyboard for help/guide
     *   Callback data classes for all interactions (pagination, card viewing, navigation)
+    *   `ScrapCardCallback` - Callback data for scrapping (deleting) cards.
+        *   `card_id` (str): UUID as string
+        *   `return_page` (int): Page to return to in inventory
+        *   `confirm` (bool): Whether this is a confirmation step
 *   Create `utils/text.py` with `escape_markdown()` to escape special characters in user-provided content.
+*   Create `utils/emojis.py` with:
+    *   `get_biome_emoji(biome: BiomeType)`
+    *   `get_rarity_emoji(rarity: Rarity)`
+*   Create `utils/commands.py` with command definitions and helper functions
+    *   `get_player_commands()` - Returns a list of player commands with Ukrainian descriptions
+    *   `get_admin_commands()` - Returns a list of admin commands with Ukrainian descriptions
+    *   `get_all_commands()` - Returns a list of all commands (player + admin) with Ukrainian descriptions
+    *   `is_admin(user_id: int)` - Checks if a user ID is in the list of admin user IDs.
 
 ## USER INTERFACE
 
@@ -324,5 +389,7 @@ globs: *
     *   Card Detail View (Inline Keyboard)
         *   Navigation: ⬅️ Попередня / Наступна ➡️
         *   🔙 До Колекції (Back to Inventory)
+        *   🔩 Розпилити (Отримати Рештки) - Scraps the card.
+
 *   Main Menu Items: 📊 Профіль (Profile/Stats), 🎴 Колекція (Inventory/Cards), ❓ Допомога (Help).
 *   Inventory Display: Paginated list (e.g., 5-10 cards per page with Next/Prev buttons)
