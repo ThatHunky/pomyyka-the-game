@@ -38,6 +38,7 @@ globs: *
 *   The application must be runnable without the Gemini API key being present (manual adding is acceptable). When `GEMINI_API_KEY` is not provided, Gemini-related functionality should be gracefully disabled.
 *   When tracking group chats in `middlewares/group_tracker.py`, use PostgreSQL's `INSERT ON CONFLICT DO NOTHING` to prevent errors when the bot joins a group it has already been in.
 *   All Admin prompts should be in Ukrainian.
+*   Escape special Markdown V2 characters in user-provided content (card names, usernames, rarity/biome values, user first names) to prevent parsing errors. Use `utils/text.py` with `escape_markdown()`.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -77,6 +78,11 @@ globs: *
         *   Fire-and-forget an async task to insert the message into `MessageLog`.
     *   **Optimization**: Do *not* log commands (starting with `/`).
 *   **Middleware Event Handling**: When registering middlewares using `dp.message.middleware()`, the `event` parameter is a `Message` object, not an `Update` object.
+*   User registration should be triggered on *any* interaction, not just specific commands like `/start`.
+    *   **Implementation**: Modify the `get_or_create_user` function or equivalent to be called in a middleware that intercepts all messages.
+    *   Implement `middlewares/user_registration.py` to automatically register users on any interaction (messages, callback queries, etc.).
+    *   Register the middleware for both `message` and `callback_query` events.
+    *   Uses PostgreSQL `ON CONFLICT DO NOTHING` for thread-safe registration.
 
 ## HANDLERS
 
@@ -85,6 +91,7 @@ globs: *
         *   **Note**: All handler files (`handlers/drops.py`, `handlers/admin.py`, `handlers/admin_autocard.py`) already use the correct import path: `from aiogram.filters.callback_data import CallbackData`.
     *   **Loop Fix**: In `_award_card_and_update_message`, remove the `finally:` block and move the `break` statement to the end of the `try` block.
     *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Instead, place the `break` statement as the last line inside the `try` block.
+    *   **User Creation**: When a user claims a drop, the `_award_card_and_update_message` function automatically creates a User record if one doesn't exist.
 *   Create `handlers/admin.py` to handle admin commands.
     *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
     *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
@@ -119,7 +126,7 @@ globs: *
             *   Bot edits message: "🧠 Проєктую архітектуру картки..." (Designing card architecture...).
             *   Call `CardArchitectService.generate_blueprint(logs, target_user_id)`. Pass the `target_user_id` to the service.
         5.  **Art Forge Step**:
-            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in nano-горні...).
+            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in нано-горні...).
             *   Call `ArtForgeService.forge_card_image(blueprint.raw_image_prompt_en, blueprint.biome)`.
         6.  **Preview & Confirmation**:
             *   Bot deletes status message.
@@ -129,11 +136,33 @@ globs: *
             *   Save `CardTemplate` to DB.
             *   Create `UserCard` for the target user instantly.
             *   Edit message: "🎉 Картку [Card Name] створено та видано [User]!"
+    *   **User Creation**: The `admin_autocard.py` handler automatically creates a User record if one doesn't exist when awarding a card.
 *   Create `handlers/player.py` to handle player commands.
     *   Implement `/start` handler that:
         *   Gets or creates User record using pattern from `handlers/drops.py`.
         *   Responds with welcome message in Ukrainian.
         *   Logs the registration event.
+        *   Sends main menu keyboard.
+    *   Implement `/menu` handler that:
+        *   Shows main menu keyboard.
+    *   Implement `/me` or `/profile` handler that:
+        *   Shows user profile with stats and inline keyboard.
+    *   Implement `/inventory` handler that:
+        *   Shows user's card collection with pagination and inline keyboard.
+    *   Implement `/stats` handler that:
+        *   Shows detailed statistics dashboard with inline keyboard.
+    *   Implement `/help` handler that:
+        *   Shows help/guide with inline keyboard.
+    *   **`/start` Command**: The `/start` command is informational only and not strictly required for a user to receive cards. Card distribution handlers automatically create users if they don't exist. If `/start` should be mandatory, a check needs to be added to the card award functions.
+    *   **Reply Keyboard**: Reply keyboards (persistent buttons at the bottom) only work in private chats with the bot, not in group chats. Test by messaging the bot privately.
+        *   Appears after `/start` or `/menu`.
+        *   Shows: 📊 Профіль, 🎴 Колекція, 📈 Статистика, ❓ Допомога.
+    *   **Inline Keyboards**: Inline Keyboards (buttons below messages) work everywhere.
+        *   Appear with `/profile`, `/inventory`, `/stats`, `/help`.
+        *   Used for card details, pagination, and navigation.
+    *   **User Registration**: User registration should be triggered on *any* interaction, not just specific commands like `/start`.
+        *   **Implementation**: Modify the `get_or_create_user` function or equivalent to be called in a middleware that intercepts all messages.
+        *   Now handled by `middlewares/user_registration.py`
 
 ## DATABASE
 
@@ -189,6 +218,7 @@ globs: *
     *   Update `main.py` to register middleware and start cleanup scheduler.
     *   Ensure the startup sequence wraps the `await bot.delete_webhook()` call in a try/except block. If the bot was previously running on a webhook, this can crash the polling startup.
     *   Log admin configuration at startup: Log the number of admins configured and whether admin functionality is enabled.
+    *   Register `UserRegistrationMiddleware` for both `message` and `callback_query` events to ensure users are automatically registered on any interaction.
 
 ## AI SERVICES
 
@@ -264,7 +294,35 @@ globs: *
         *   Generates a UUID filename.
         *   Saves to disk.
         *   Returns the relative filepath.
+*   Create `utils/keyboards.py` for keyboard creation.
+    *   `get_main_menu_keyboard()` - Reply keyboard with main menu options
+    *   `get_inventory_keyboard()` - Inline keyboard for inventory with pagination
+    *   `get_card_detail_keyboard()` - Inline keyboard for viewing individual cards
+    *   `get_profile_keyboard()` - Inline keyboard for profile/stats
+    *   `get_help_keyboard()` - Inline keyboard for help/guide
+    *   Callback data classes for all interactions (pagination, card viewing, navigation)
+*   Create `utils/text.py` with `escape_markdown()` to escape special characters in user-provided content.
 
 ## USER INTERFACE
 
-* Implement proper Keyboard Buttons for users in the bot - main menu, cards, inventory - everything.
+*   Implement a full keyboard system with:
+    *   Reply Keyboards (persistent buttons): Main menu navigation
+    *   Inline Keyboards: Inventory browsing, card details, pagination, and actions
+*   Reply Keyboards (persistent buttons): Main menu navigation
+*   Inline Keyboards: Inventory browsing, card details, pagination, and actions
+*   Menu Structure:
+    *   Main Menu (Reply Keyboard)
+        *   📊 Профіль (Profile)
+        *   🎴 Колекція (Inventory)
+        *   ❓ Допомога (Help)
+    *   Profile View (Inline Keyboard)
+        *   🔙 Назад (Back to Main Menu)
+    *   Inventory View (Inline Keyboard)
+        *   Navigation: ⬅️ Попередня / Наступна ➡️
+        *   Filter/Sort options (if applicable)
+        *   🔙 Назад (Back to Main Menu)
+    *   Card Detail View (Inline Keyboard)
+        *   Navigation: ⬅️ Попередня / Наступна ➡️
+        *   🔙 До Колекції (Back to Inventory)
+*   Main Menu Items: 📊 Профіль (Profile/Stats), 🎴 Колекція (Inventory/Cards), ❓ Допомога (Help).
+*   Inventory Display: Paginated list (e.g., 5-10 cards per page with Next/Prev buttons)

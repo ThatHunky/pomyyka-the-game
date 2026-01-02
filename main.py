@@ -15,6 +15,7 @@ from handlers.player import router as player_router
 from logging_config import setup_logging, get_logger
 from middlewares.group_tracker import ChatTrackingMiddleware
 from middlewares.logger import MessageLoggingMiddleware
+from middlewares.user_registration import UserRegistrationMiddleware
 from services import DropScheduler
 from services.cleanup import CleanupService
 
@@ -47,7 +48,11 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
-    # Register middlewares (order matters - ChatTrackingMiddleware runs first)
+    # Register middlewares (order matters)
+    # UserRegistrationMiddleware should run first to ensure users are registered
+    user_registration = UserRegistrationMiddleware()
+    dp.message.middleware(user_registration)
+    dp.callback_query.middleware(user_registration)
     dp.message.middleware(ChatTrackingMiddleware())
     dp.message.middleware(MessageLoggingMiddleware())
     logger.info("Middlewares registered")
