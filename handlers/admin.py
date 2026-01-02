@@ -2,11 +2,12 @@
 
 import asyncio
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
@@ -36,6 +37,7 @@ from services.art_forge import ArtForgeService
 from services.card_architect import CardArchitectService
 from services.chat_import import ChatImportService
 from services.nano_banana import NanoBananaService
+from utils.images import save_uploaded_image_to_webp
 
 logger = get_logger(__name__)
 
@@ -47,8 +49,12 @@ class CardCreationStates(StatesGroup):
 
     waiting_for_name = State()
     waiting_for_biome = State()
+    waiting_for_image_source = State()
     waiting_for_art_prompt = State()
-    waiting_for_stats = State()
+    waiting_for_upload_photo = State()
+    waiting_for_atk = State()
+    waiting_for_def = State()
+    waiting_for_rarity = State()
 
 
 class BiomeCallback(CallbackData, prefix="biome"):
@@ -66,10 +72,16 @@ class AdminCardBrowseCallback(CallbackData, prefix="admin_cards"):
     user_id: int = 0  # User ID for give action
 
 
-class RegenerateImageCallback(CallbackData, prefix="regen_img"):
-    """Callback data for image regeneration."""
+class ImageSourceCallback(CallbackData, prefix="newcard_img"):
+    """Callback data for manual card image source selection."""
 
-    action: str = "regenerate"
+    source: str  # "generate" | "upload"
+
+
+class NewCardRarityCallback(CallbackData, prefix="newcard_rarity"):
+    """Callback data for rarity selection in manual flow."""
+
+    rarity: str
 
 
 def is_admin(user_id: int) -> bool:
@@ -102,7 +114,7 @@ async def check_admin(message: Message) -> bool:
     return True
 
 
-@router.message(Command("newcard"))
+@router.message(Command("newcard", "addcard"))
 async def cmd_newcard(message: Message, state: FSMContext) -> None:
     """Start card creation flow."""
     if not await check_admin(message):
@@ -153,7 +165,7 @@ async def process_biome_selection(
     callback_data: BiomeCallback,
     state: FSMContext,
 ) -> None:
-    """Process biome selection and request art prompt."""
+    """Process biome selection and ask how to provide an image."""
     if not callback.message:
         await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
@@ -167,12 +179,95 @@ async def process_biome_selection(
 
     await state.update_data(biome=biome_type.value, biome_type=biome_type)
 
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎨 Згенерувати зображення",
+                    callback_data=ImageSourceCallback(source="generate").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📤 Завантажити фото",
+                    callback_data=ImageSourceCallback(source="upload").pack(),
+                )
+            ],
+        ]
+    )
+
     await callback.message.edit_text(
-        f"✅ Біом обрано: **{biome_type.value}**\n\nВведіть опис для генерації зображення:",
+        f"✅ Біом обрано: **{biome_type.value}**\n\nОберіть, як додати зображення:",
         parse_mode="Markdown",
+        reply_markup=keyboard,
     )
     await safe_callback_answer(callback)
-    await state.set_state(CardCreationStates.waiting_for_art_prompt)
+    await state.set_state(CardCreationStates.waiting_for_image_source)
+
+
+def _build_rarity_keyboard() -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for rarity in Rarity:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{get_rarity_emoji(rarity)} {rarity.value}",
+                    callback_data=NewCardRarityCallback(rarity=rarity.value).pack(),
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _send_image_preview(message: Message, image_url: str | None) -> None:
+    """Send a best-effort image preview (non-fatal if fails)."""
+    if not image_url:
+        return
+
+    try:
+        image_path = Path(image_url)
+        if image_path.exists():
+            await message.answer_photo(photo=FSInputFile(str(image_path)))
+    except Exception as e:
+        logger.warning("Failed to send image preview", error=str(e), image_url=image_url)
+
+
+@router.callback_query(ImageSourceCallback.filter(), CardCreationStates.waiting_for_image_source)
+async def handle_image_source_choice(
+    callback: CallbackQuery,
+    callback_data: ImageSourceCallback,
+    state: FSMContext,
+) -> None:
+    """Handle Generate vs Upload selection for manual card creation."""
+    if not callback.message:
+        await safe_callback_answer(callback, "Помилка: повідомлення не знайдено", show_alert=True)
+        return
+
+    if callback_data.source == "generate":
+        if not settings.gemini_api_key:
+            await safe_callback_answer(
+                callback,
+                "⚠️ GEMINI_API_KEY не налаштований — генерація зображень недоступна. Оберіть завантаження фото.",
+                show_alert=True,
+            )
+            return
+
+        await callback.message.edit_text(
+            "Введіть опис для генерації зображення:",
+        )
+        await safe_callback_answer(callback)
+        await state.set_state(CardCreationStates.waiting_for_art_prompt)
+        return
+
+    if callback_data.source == "upload":
+        await callback.message.edit_text(
+            "📤 Надішліть фото для картки одним повідомленням (без документу).",
+        )
+        await safe_callback_answer(callback)
+        await state.set_state(CardCreationStates.waiting_for_upload_photo)
+        return
+
+    await safe_callback_answer(callback, "❌ Невідомий вибір", show_alert=True)
 
 
 async def generate_card_image(user_prompt: str, biome_style: str) -> Optional[str]:
@@ -244,241 +339,117 @@ async def process_art_prompt(message: Message, state: FSMContext) -> None:
         pass
 
     if image_url:
-        # Send image with regenerate button
-        try:
-            image_path = Path(image_url)
-            if image_path.exists():
-                photo_file = FSInputFile(str(image_path))
-                caption = (
-                    "✅ **Зображення згенеровано!**\n\n"
-                    "Введіть характеристики картки у форматі:\n"
-                    "`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                    "Приклад: `50 30 Common`\n\n"
-                    "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic"
-                )
-                
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="🔄 Згенерувати знову",
-                                callback_data=RegenerateImageCallback().pack(),
-                            )
-                        ]
-                    ]
-                )
-                
-                await message.answer_photo(
-                    photo=photo_file,
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=keyboard,
-                )
-            else:
-                # Fallback if file doesn't exist
-                await message.answer(
-                    f"✅ Зображення згенеровано!\n\n"
-                    f"Введіть характеристики картки у форматі:\n"
-                    f"`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                    f"Приклад: `50 30 Common`\n\n"
-                    f"Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-                    parse_mode="Markdown",
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to send image preview",
-                error=str(e),
-                image_url=image_url,
-            )
-            # Fallback to text message
-            await message.answer(
-                f"✅ Зображення згенеровано!\n\n"
-                f"Введіть характеристики картки у форматі:\n"
-                f"`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                f"Приклад: `50 30 Common`\n\n"
-                f"Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-                parse_mode="Markdown",
-            )
+        await _send_image_preview(message, image_url)
     else:
         await message.answer(
-            "⚠️ Генерація зображення тимчасово недоступна.\n\n"
-            "Введіть характеристики картки у форматі:\n"
-            "`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-            "Приклад: `50 30 Common`\n\n"
-            "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-            parse_mode="Markdown",
+            "⚠️ Генерація зображення тимчасово недоступна. Можна продовжити без зображення або спробувати завантаження фото.",
         )
 
-    await state.set_state(CardCreationStates.waiting_for_stats)
+    await message.answer("Введіть ⚔️ **ATK** (число):", parse_mode="Markdown")
+    await state.set_state(CardCreationStates.waiting_for_atk)
 
 
-@router.callback_query(RegenerateImageCallback.filter(), CardCreationStates.waiting_for_stats)
-async def handle_regenerate_image(
+@router.message(CardCreationStates.waiting_for_upload_photo)
+async def process_uploaded_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+    """Process a custom uploaded photo for the manual card."""
+    if not message.photo:
+        await message.answer("❌ Це не схоже на фото. Надішліть саме фото (не документ).")
+        return
+
+    try:
+        largest_photo = message.photo[-1]
+        file = await bot.get_file(largest_photo.file_id)
+        downloaded = await bot.download_file(file.file_path)
+        photo_bytes = downloaded.read()
+    except Exception as e:
+        logger.warning("Failed to download uploaded photo", error=str(e))
+        await message.answer("❌ Не вдалося завантажити фото. Спробуйте ще раз.")
+        return
+
+    try:
+        image_url = save_uploaded_image_to_webp(photo_bytes, directory="media/cards")
+    except Exception as e:
+        logger.warning("Failed to save uploaded photo", error=str(e))
+        await message.answer("❌ Не вдалося зберегти фото. Спробуйте інше зображення.")
+        return
+
+    await state.update_data(image_url=image_url)
+    await _send_image_preview(message, image_url)
+
+    await message.answer("Введіть ⚔️ **ATK** (число):", parse_mode="Markdown")
+    await state.set_state(CardCreationStates.waiting_for_atk)
+
+
+@router.message(CardCreationStates.waiting_for_atk)
+async def process_atk(message: Message, state: FSMContext) -> None:
+    """Process ATK input."""
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("❌ ATK має бути числом. Введіть ⚔️ **ATK** ще раз:", parse_mode="Markdown")
+        return
+
+    atk = int(raw)
+    await state.update_data(atk=atk)
+    await message.answer("Введіть 🛡️ **DEF** (число):", parse_mode="Markdown")
+    await state.set_state(CardCreationStates.waiting_for_def)
+
+
+@router.message(CardCreationStates.waiting_for_def)
+async def process_def(message: Message, state: FSMContext) -> None:
+    """Process DEF input."""
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("❌ DEF має бути числом. Введіть 🛡️ **DEF** ще раз:", parse_mode="Markdown")
+        return
+
+    defense = int(raw)
+    await state.update_data(defense=defense)
+    await message.answer("Оберіть 💎 **рідкість**:", parse_mode="Markdown", reply_markup=_build_rarity_keyboard())
+    await state.set_state(CardCreationStates.waiting_for_rarity)
+
+
+@router.callback_query(NewCardRarityCallback.filter(), CardCreationStates.waiting_for_rarity)
+async def process_rarity_selection(
     callback: CallbackQuery,
-    callback_data: RegenerateImageCallback,
+    callback_data: NewCardRarityCallback,
     state: FSMContext,
 ) -> None:
-    """Handle image regeneration request."""
+    """Save the card template after rarity selection."""
     if not callback.message:
-        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Помилка: повідомлення не знайдено", show_alert=True)
         return
-
-    data = await state.get_data()
-    art_prompt = data.get("art_prompt")
-    biome_style = data.get("biome", "Звичайний")
-
-    if not art_prompt:
-        await safe_callback_answer(callback,"❌ Помилка: опис для генерації не знайдено", show_alert=True)
-        return
-
-    # Show loading state
-    try:
-        if callback.message.photo:
-            await callback.message.edit_caption("🔄 Генерую нове зображення...")
-        else:
-            await callback.message.edit_text("🔄 Генерую нове зображення...")
-    except Exception:
-        pass
-
-    await safe_callback_answer(callback,"🔄 Генерую нове зображення...")
-
-    # Generate new image
-    image_url = await generate_card_image(art_prompt, biome_style)
-
-    # Update state with new image URL
-    await state.update_data(image_url=image_url)
-
-    if image_url:
-        try:
-            image_path = Path(image_url)
-            if image_path.exists():
-                photo_file = FSInputFile(str(image_path))
-                caption = (
-                    "✅ **Зображення згенеровано!**\n\n"
-                    "Введіть характеристики картки у форматі:\n"
-                    "`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                    "Приклад: `50 30 Common`\n\n"
-                    "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic"
-                )
-                
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="🔄 Згенерувати знову",
-                                callback_data=RegenerateImageCallback().pack(),
-                            )
-                        ]
-                    ]
-                )
-                
-                # Delete old message and send new one
-                try:
-                    await callback.message.delete()
-                except Exception:
-                    pass
-                
-                await callback.message.answer_photo(
-                    photo=photo_file,
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=keyboard,
-                )
-            else:
-                # Fallback if file doesn't exist
-                await callback.message.edit_text(
-                    f"✅ Зображення згенеровано!\n\n"
-                    f"Введіть характеристики картки у форматі:\n"
-                    f"`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                    f"Приклад: `50 30 Common`\n\n"
-                    f"Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-                    parse_mode="Markdown",
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to send regenerated image",
-                error=str(e),
-                image_url=image_url,
-            )
-            # Fallback to text message
-            await callback.message.edit_text(
-                f"✅ Зображення згенеровано!\n\n"
-                f"Введіть характеристики картки у форматі:\n"
-                f"`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-                f"Приклад: `50 30 Common`\n\n"
-                f"Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-                parse_mode="Markdown",
-            )
-    else:
-        await callback.message.edit_text(
-            "⚠️ Генерація зображення тимчасово недоступна.\n\n"
-            "Введіть характеристики картки у форматі:\n"
-            "`АТАКА ЗАХИСТ РІДКІСТЬ`\n\n"
-            "Приклад: `50 30 Common`\n\n"
-            "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-            parse_mode="Markdown",
-        )
-
-
-@router.message(CardCreationStates.waiting_for_stats)
-async def process_stats(message: Message, state: FSMContext) -> None:
-    """Process card stats input and save card to database."""
-    stats_text = message.text.strip()
-
-    # Parse stats: "АТАКА ЗАХИСТ РІДКІСТЬ" or "ATK DEF RARITY"
-    # Example: "50 30 Common" or "50 30 Rare"
-    stats_pattern = r"(\d+)\s+(\d+)\s+(\w+)"
-    match = re.match(stats_pattern, stats_text, re.IGNORECASE)
-
-    if not match:
-        await message.answer(
-            "❌ Невірний формат характеристик.\n\n"
-            "Введіть у форматі: `АТАКА ЗАХИСТ РІДКІСТЬ`\n"
-            "Приклад: `50 30 Common`\n\n"
-            "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-            parse_mode="Markdown",
-        )
-        return
-
-    atk = int(match.group(1))
-    defense = int(match.group(2))
-    rarity_str = match.group(3).capitalize()
 
     # Validate rarity
     try:
-        rarity = Rarity(rarity_str)
+        rarity = Rarity(callback_data.rarity)
     except ValueError:
-        await message.answer(
-            f"❌ Невірна рідкість: {rarity_str}\n\n"
-            "Доступні рівні рідкості: Common, Rare, Epic, Legendary, Mythic",
-        )
+        await safe_callback_answer(callback, "❌ Невірна рідкість", show_alert=True)
         return
 
-    # Get data from state
     data = await state.get_data()
     card_name = data.get("card_name")
     biome_type = data.get("biome_type")
     image_url = data.get("image_url")
+    atk = data.get("atk")
+    defense = data.get("defense")
 
-    if not card_name or not biome_type:
-        await message.answer("❌ Помилка: дані про картку втрачено. Почніть спочатку з /newcard")
+    if not card_name or not biome_type or atk is None or defense is None:
+        await callback.message.answer("❌ Помилка: дані про картку втрачено. Почніть спочатку з /addcard")
         await state.clear()
+        await safe_callback_answer(callback)
         return
 
-    # Save card to database
+    current_print_date = datetime.now().strftime("%m/%Y")
+
     async for session in get_session():
         try:
-            # Get current month/year for print_date
-            from datetime import datetime
-            current_print_date = datetime.now().strftime("%m/%Y")
-            
             card_template = CardTemplate(
                 name=card_name,
                 image_url=image_url,
                 rarity=rarity,
                 biome_affinity=biome_type,
-                stats={"atk": atk, "def": defense},
-                attacks=None,  # Manual cards don't have attacks yet
+                stats={"atk": int(atk), "def": int(defense)},
+                attacks=None,
                 weakness=None,
                 resistance=None,
                 print_date=current_print_date,
@@ -487,9 +458,10 @@ async def process_stats(message: Message, state: FSMContext) -> None:
             await session.flush()
             await session.commit()
 
-            await message.answer(
+            escaped_name = escape_markdown(card_name)
+            await callback.message.answer(
                 f"✅ **Картка успішно створена!**\n\n"
-                f"📛 Назва: {card_name}\n"
+                f"📛 Назва: {escaped_name}\n"
                 f"🌍 Біом: {biome_type.value}\n"
                 f"⚔️ Атака: {atk}\n"
                 f"🛡️ Захист: {defense}\n"
@@ -499,25 +471,24 @@ async def process_stats(message: Message, state: FSMContext) -> None:
             )
 
             logger.info(
-                "Card template created",
+                "Card template created (manual flow)",
                 card_id=str(card_template.id),
                 card_name=card_name,
-                admin_id=message.from_user.id,
+                admin_id=callback.from_user.id if callback.from_user else None,
             )
 
             await state.clear()
+            await safe_callback_answer(callback)
             break
-
         except Exception as e:
             logger.error(
-                "Error saving card template",
+                "Error saving card template (manual flow)",
                 error=str(e),
-                admin_id=message.from_user.id,
+                admin_id=callback.from_user.id if callback.from_user else None,
                 exc_info=True,
             )
-            await message.answer(
-                f"❌ Помилка при збереженні картки: {str(e)}",
-            )
+            await callback.message.answer(f"❌ Помилка при збереженні картки: {str(e)}")
+            await safe_callback_answer(callback)
             break
 
 

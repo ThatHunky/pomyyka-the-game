@@ -189,7 +189,8 @@ globs: *
 *   **User-Friendly Editing**: Implement inline keyboard buttons for editing generated cards, replacing the raw JSON editing. The options should include "Edit name", "Edit biome", and "Edit stats". After any edits, the image should automatically regenerate with updated information.
 *   **`forge_card_image` Function**: The `forge_card_image` function should accept card fields or a "card_text" structure to ensure necessary values are provided for image generation.
 *   **Placeholder Image Conversion**: Convert all PNG placeholders in `assets/placeholders/` to WebP format. A script `convert_placeholders_to_webp.py` should be created to handle this conversion and apply borders to the outputs.
-*   **`/addcard` Command Enhancement**:
+*   `/addcard` Command Enhancement:
+    *   `/addcard` is an alias for the existing `/newcard` command.
     *   Modify the `/addcard` command to allow manual card creation by either:
         *   Generating an image via AI, as before.
         *   Uploading a custom image.
@@ -197,6 +198,8 @@ globs: *
     *   The `/addcard` implementation and how it currently generates images should be located.
     *   Add a "manual flow" where the user can either generate an image or upload one.
     *   Include a simple "edit stats/name/etc" step before saving.
+    *   After selecting a biome, the bot should ask to choose the image method (generate or upload).
+    *   The user should enter ATK, then DEF, then the rarity should be selected via buttons.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -387,6 +390,4 @@ globs: *
     *   `close()` - cleanup connection
 *   Implement `services/session_manager.py` to manage trade and battle sessions.
 *   The `SessionManager` should also include methods for storing and retrieving blueprint data for autocard flows, using UUIDs as keys. These methods are:
-    *   `store_blueprint(blueprint(blueprint_data: dict, ttl: int = 3600) -> str`: Stores blueprint data in Redis for autocard callbacks.
-    *   `get_blueprint(blueprint_id: str) -> Optional[dict]`: Gets blueprint data from Redis.
-    *   `delete_blueprint(blueprint_id: str) -> bool
+    *   `store_blueprint(blueprint(blueprint_data: dict, ttl:

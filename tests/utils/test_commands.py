@@ -32,11 +32,11 @@ class TestCommands:
         commands = get_admin_commands()
         assert isinstance(commands, list), "Should return a list"
 
-    def test_get_admin_commands_contains_newcard(self):
-        """Test that admin commands include /newcard."""
+    def test_get_admin_commands_contains_addcard(self):
+        """Test that admin commands include /addcard."""
         commands = get_admin_commands()
         command_names = [cmd.command for cmd in commands]
-        assert "newcard" in command_names, "Should include newcard command"
+        assert "addcard" in command_names, "Should include addcard command"
 
     def test_get_all_commands_includes_player_and_admin(self):
         """Test that get_all_commands includes both player and admin commands."""
