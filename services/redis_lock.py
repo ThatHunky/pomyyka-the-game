@@ -4,6 +4,7 @@ from typing import Optional
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
+from redis.exceptions import NoScriptError, ResponseError
 
 from config import settings
 from logging_config import get_logger
@@ -46,6 +47,8 @@ class DropManager:
         self._redis: Optional[Redis] = redis_client
         self._default_ttl = default_ttl
         self._script_sha: Optional[str] = None
+        # Some test doubles (fakeredis) don't implement SCRIPT/EVALSHA.
+        self._script_supported: bool | None = None
 
     async def _get_redis(self) -> Redis:
         """Get or create Redis client connection."""
@@ -57,16 +60,33 @@ class DropManager:
             )
         return self._redis
 
-    async def _ensure_script_loaded(self) -> str:
+    async def _ensure_script_loaded(self) -> str | None:
         """
         Ensure Lua script is loaded and return its SHA.
 
         Returns:
             SHA hash of the loaded script.
         """
+        if self._script_supported is False:
+            return None
+
         client = await self._get_redis()
         if self._script_sha is None:
-            self._script_sha = await client.script_load(CLAIM_DROP_SCRIPT)
+            try:
+                self._script_sha = await client.script_load(CLAIM_DROP_SCRIPT)
+                self._script_supported = True
+            except ResponseError as e:
+                # fakeredis: "unknown command 'script'..."
+                msg = str(e).lower()
+                if "unknown command" in msg and "script" in msg:
+                    logger.debug(
+                        "Redis server does not support SCRIPT; falling back to SET NX EX",
+                        error=str(e),
+                    )
+                    self._script_supported = False
+                    self._script_sha = None
+                    return None
+                raise
         return self._script_sha
 
     async def try_claim_drop(self, message_id: int, user_id: int, ttl: Optional[int] = None) -> bool:
@@ -91,20 +111,25 @@ class DropManager:
         ttl = int(ttl)
 
         key = f"drop:{message_id}"
-        script_sha = await self._ensure_script_loaded()
         client = await self._get_redis()
 
         try:
-            result = await client.evalsha(
-                script_sha,
-                1,  # Number of keys
-                key,  # KEYS[1]
-                str(user_id),  # ARGV[1]
-                str(ttl),  # ARGV[2]
-            )
+            script_sha = await self._ensure_script_loaded()
 
-            # Lua script returns 1 for success, 0 for failure
-            claimed = result == 1
+            if script_sha is not None:
+                result = await client.evalsha(
+                    script_sha,
+                    1,  # Number of keys
+                    key,  # KEYS[1]
+                    str(user_id),  # ARGV[1]
+                    str(ttl),  # ARGV[2]
+                )
+                # Lua script returns 1 for success, 0 for failure
+                claimed = result == 1
+            else:
+                # Fallback: use atomic SET NX EX (works on fakeredis too)
+                result = await client.set(key, str(user_id), nx=True, ex=ttl)
+                claimed = bool(result)
 
             if claimed:
                 logger.info(
@@ -121,6 +146,12 @@ class DropManager:
                 )
 
             return claimed
+
+        except NoScriptError:
+            # Script cache evicted; degrade gracefully (still atomic).
+            self._script_sha = None
+            result = await client.set(key, str(user_id), nx=True, ex=ttl)
+            return bool(result)
 
         except redis.RedisError as e:
             logger.error(
@@ -194,6 +225,11 @@ class DropManager:
     async def close(self) -> None:
         """Close Redis connection if it was created by this instance."""
         if self._redis is not None:
-            await self._redis.aclose()
+            close_fn = getattr(self._redis, "aclose", None) or getattr(self._redis, "close", None)
+            if close_fn is not None:
+                result = close_fn()
+                if hasattr(result, "__await__"):
+                    await result
             self._redis = None
             self._script_sha = None
+            self._script_supported = None

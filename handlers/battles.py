@@ -19,6 +19,7 @@ from utils.keyboards import (
     DuelStakeCallback,
 )
 from utils.text import escape_markdown
+from utils.telegram_utils import safe_callback_answer
 
 logger = get_logger(__name__)
 
@@ -37,22 +38,22 @@ async def handle_duel_accept(callback: CallbackQuery, callback_data: DuelAcceptC
     If rejected, cancel the challenge.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_battle_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія бою не знайдена або застаріла", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія бою не знайдена або застаріла", show_alert=True)
         return
 
     # Check if user is the opponent
     if session_data["opponent_id"] != user.id:
-        await callback.answer("❌ Ти не є суперником у цьому бою", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не є суперником у цьому бою", show_alert=True)
         return
 
     if not callback_data.accept:
@@ -62,7 +63,7 @@ async def handle_duel_accept(callback: CallbackQuery, callback_data: DuelAcceptC
             "❌ **Виклик відхилено**",
             parse_mode="Markdown",
         )
-        await callback.answer("Виклик відхилено")
+        await safe_callback_answer(callback,"Виклик відхилено")
         return
 
     # Accepted - show stake selection
@@ -102,7 +103,7 @@ async def handle_duel_accept(callback: CallbackQuery, callback_data: DuelAcceptC
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
-    await callback.answer("Оберіть ставку")
+    await safe_callback_answer(callback,"Оберіть ставку")
 
 
 @router.callback_query(DuelStakeCallback.filter())
@@ -113,22 +114,22 @@ async def handle_duel_stake(callback: CallbackQuery, callback_data: DuelStakeCal
     Store stake in session and request confirmation from both players.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_battle_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія бою не знайдена", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія бою не знайдена", show_alert=True)
         return
 
     # Check if user is part of this battle
     if user.id not in [session_data["challenger_id"], session_data["opponent_id"]]:
-        await callback.answer("❌ Ти не є учасником цього бою", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не є учасником цього бою", show_alert=True)
         return
 
     # Set stake
@@ -163,7 +164,7 @@ async def handle_duel_stake(callback: CallbackQuery, callback_data: DuelStakeCal
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
-    await callback.answer(f"Ставка встановлена: {callback_data.stake} Решток")
+    await safe_callback_answer(callback,f"Ставка встановлена: {callback_data.stake} Решток")
 
 
 @router.callback_query(DuelConfirmStakeCallback.filter())
@@ -176,22 +177,22 @@ async def handle_duel_confirm_stake(
     When both confirm, proceed to deck selection.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_battle_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія бою не знайдена", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія бою не знайдена", show_alert=True)
         return
 
     # Check if user is part of this battle
     if user.id not in [session_data["challenger_id"], session_data["opponent_id"]]:
-        await callback.answer("❌ Ти не є учасником цього бою", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не є учасником цього бою", show_alert=True)
         return
 
     # Check balance
@@ -202,12 +203,12 @@ async def handle_duel_confirm_stake(
             db_user = result.scalar_one_or_none()
 
             if not db_user:
-                await callback.answer("❌ Користувача не знайдено", show_alert=True)
+                await safe_callback_answer(callback,"❌ Користувача не знайдено", show_alert=True)
                 break
 
             stake = session_data.get("stake", 0)
             if db_user.balance < stake:
-                await callback.answer(
+                await safe_callback_answer(callback,
                     f"❌ Недостатньо Решток! Потрібно: {stake}, у тебе: {db_user.balance}",
                     show_alert=True,
                 )
@@ -217,7 +218,7 @@ async def handle_duel_confirm_stake(
             both_confirmed = await session_manager.confirm_battle_stake(callback_data.session_id, user.id)
 
             if not both_confirmed:
-                await callback.answer("✅ Ставка підтверджена! Очікуємо підтвердження суперника...")
+                await safe_callback_answer(callback,"✅ Ставка підтверджена! Очікуємо підтвердження суперника...")
                 break
 
             # Both confirmed - proceed to deck selection
@@ -246,7 +247,7 @@ async def handle_duel_confirm_stake(
                 deck_text,
                 parse_mode="Markdown",
             )
-            await callback.answer("Оберіть 3 картки для деки через @DumpsterChroniclesBot")
+            await safe_callback_answer(callback,"Оберіть 3 картки для деки через @DumpsterChroniclesBot")
             break
 
         except Exception as e:
@@ -257,7 +258,7 @@ async def handle_duel_confirm_stake(
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 

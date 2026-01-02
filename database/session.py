@@ -1,5 +1,6 @@
 """Database session management for async SQLAlchemy."""
 
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -38,6 +39,40 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+@asynccontextmanager
+async def first_session(session_iterable) -> AsyncGenerator[AsyncSession, None]:
+    """
+    Yield exactly one session from a `get_session()`-style provider.
+
+    Supports:
+    - Real async generators (our `get_session()` implementation)
+    - Test doubles that implement `__aiter__()` but return a *sync* iterator
+      (as used in some unit tests).
+    """
+    aiter_fn = getattr(session_iterable, "__aiter__", None)
+    if callable(aiter_fn):
+        try:
+            iterator = aiter_fn()
+        except TypeError:
+            # Some tests patch __aiter__ as `lambda x: iter([...])` on the instance.
+            iterator = aiter_fn(session_iterable)
+    else:
+        iterator = iter(session_iterable)
+
+    if hasattr(iterator, "__anext__"):
+        session = await iterator.__anext__()  # type: ignore[no-any-return]
+        try:
+            yield session
+        finally:
+            aclose = getattr(iterator, "aclose", None)
+            if callable(aclose):
+                await aclose()
+    else:
+        # Synchronous iterator (typically from mocks in tests)
+        session = next(iterator)
+        yield session
 
 
 async def init_db() -> None:

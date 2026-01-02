@@ -26,7 +26,7 @@ class CardBlueprint:
     raw_image_prompt_en: str
     biome: BiomeType
     rarity: Rarity
-    stats: dict[str, int]  # {"atk": int, "def": int}
+    stats: dict[str, int]  # {"atk": int, "def": int, "meme": int}
     lore: str
     dominant_color_hex: str  # Primary color for gradients (hex format)
     accent_color_hex: str  # Secondary color for highlights (hex format)
@@ -52,7 +52,8 @@ class CardArchitectService:
         self, 
         message_logs: list[str], 
         target_user_id: Optional[int] = None,
-        user_name: Optional[str] = None
+        user_name: Optional[str] = None,
+        custom_photo_bytes: Optional[bytes] = None
     ) -> Optional[CardBlueprint]:
         """
         Generate a card blueprint from user message logs.
@@ -61,6 +62,7 @@ class CardArchitectService:
             message_logs: List of message content strings from the user.
             target_user_id: Optional target user ID to include in context.
             user_name: Optional user name/username to include in context for persona-based naming.
+            custom_photo_bytes: Optional custom photo bytes to include in blueprint generation context.
 
         Returns:
             CardBlueprint if generation successful, None otherwise.
@@ -101,17 +103,33 @@ class CardArchitectService:
             enhanced_logs.append("=" * 50)
             enhanced_logs.append("")
             
-            # Add instruction emphasizing user name usage
-            if user_name:
-                clean_name = user_name.lstrip("@")
+            # Add instruction for context-based creative naming
+            # Check if first message looks like a custom description (often more detailed/structured)
+            has_custom_description = (
+                message_logs 
+                and len(message_logs) > 0 
+                and message_logs[0] 
+                and len(message_logs[0]) > 50  # Custom descriptions are usually longer
+            )
+            
+            if has_custom_description:
                 enhanced_logs.append(
-                    f"CRITICAL: The card name MUST be based on or incorporate the user's name/persona '{clean_name}'. "
-                    f"The card should represent this specific user and reflect their identity. "
-                    f"Generate a unique card blueprint that reflects this user's personality, interests, and communication style, "
-                    f"with a card name that creatively incorporates or is inspired by their name '{clean_name}'."
+                    "IMPORTANT: Generate a creative, thematic card name based on the context provided above. "
+                    "The first item in the message history may be a custom description - use that as primary inspiration for the card name. "
+                    "The card name should be creative, memorable, and reflect the essence of the context (messages, personality, interests, communication style, photos, descriptions). "
+                    "User name/identity is available as context but does NOT need to be incorporated into the card name. "
+                    "Be creative and thematic - the name can be completely original based on the context provided."
                 )
             else:
-                enhanced_logs.append("Based on this conversation history, generate a unique card blueprint that reflects this user's personality, interests, and communication style.")
+                enhanced_logs.append(
+                    "IMPORTANT: Generate a creative, thematic card name based on the context provided above. "
+                    "The card name should be creative, memorable, and reflect the essence of the context (messages, personality, interests, communication style). "
+                    "User name/identity is available as context but does NOT need to be incorporated into the card name. "
+                    "Be creative and thematic - the name can be completely original based on the context provided."
+                )
+            
+            enhanced_logs.append("")
+            enhanced_logs.append("Generate a unique card blueprint that reflects the user's personality, interests, and communication style based on the context above.")
             
             # Log the context being sent (first 500 chars for debugging)
             context_preview = "\n".join(enhanced_logs)
@@ -130,22 +148,27 @@ class CardArchitectService:
 
             loop = asyncio.get_event_loop()
             ai_blueprint = await loop.run_in_executor(
-                None, self._ai_service.generate_blueprint, enhanced_logs
+                None, self._ai_service.generate_blueprint, enhanced_logs, custom_photo_bytes
             )
 
             # Convert to our simpler CardBlueprint format
+            # Convert Pydantic models to dicts for compatibility
+            attacks_dict = [attack.model_dump() for attack in ai_blueprint.attacks]
+            weakness_dict = ai_blueprint.weakness.model_dump() if ai_blueprint.weakness else None
+            resistance_dict = ai_blueprint.resistance.model_dump() if ai_blueprint.resistance else None
+            
             blueprint = CardBlueprint(
                 name=ai_blueprint.card_name_ua,
                 raw_image_prompt_en=ai_blueprint.raw_image_prompt_en,
                 biome=ai_blueprint.biome,
                 rarity=ai_blueprint.rarity,
-                stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def},
+                stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def, "meme": ai_blueprint.stats_meme},
                 lore=ai_blueprint.lore_ua,
                 dominant_color_hex=ai_blueprint.dominant_color_hex,
                 accent_color_hex=ai_blueprint.accent_color_hex,
-                attacks=ai_blueprint.attacks,
-                weakness=ai_blueprint.weakness,
-                resistance=ai_blueprint.resistance,
+                attacks=attacks_dict,
+                weakness=weakness_dict,
+                resistance=resistance_dict,
                 print_date=ai_blueprint.print_date,
             )
 
@@ -213,18 +236,23 @@ class CardArchitectService:
             )
 
             # Convert to our simpler CardBlueprint format
+            # Convert Pydantic models to dicts for compatibility
+            attacks_dict = [attack.model_dump() for attack in ai_blueprint.attacks]
+            weakness_dict = ai_blueprint.weakness.model_dump() if ai_blueprint.weakness else None
+            resistance_dict = ai_blueprint.resistance.model_dump() if ai_blueprint.resistance else None
+            
             blueprint = CardBlueprint(
                 name=ai_blueprint.card_name_ua,
                 raw_image_prompt_en=ai_blueprint.raw_image_prompt_en,
                 biome=ai_blueprint.biome,
                 rarity=ai_blueprint.rarity,
-                stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def},
+                stats={"atk": ai_blueprint.stats_atk, "def": ai_blueprint.stats_def, "meme": ai_blueprint.stats_meme},
                 lore=ai_blueprint.lore_ua,
                 dominant_color_hex=ai_blueprint.dominant_color_hex,
                 accent_color_hex=ai_blueprint.accent_color_hex,
-                attacks=ai_blueprint.attacks,
-                weakness=ai_blueprint.weakness,
-                resistance=ai_blueprint.resistance,
+                attacks=attacks_dict,
+                weakness=weakness_dict,
+                resistance=resistance_dict,
                 print_date=ai_blueprint.print_date,
             )
 

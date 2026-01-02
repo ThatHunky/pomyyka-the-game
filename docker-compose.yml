@@ -6,6 +6,7 @@ services:
       - .env
     volumes:
       - ./data/chat_exports:/app/data/chat_exports
+      - ./assets:/app/assets
     depends_on:
       db:
         condition: service_healthy

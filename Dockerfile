@@ -1,9 +1,10 @@
 FROM python:3.14-slim
 
-# Install system dependencies for PostgreSQL
+# Install system dependencies for PostgreSQL and ffmpeg
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

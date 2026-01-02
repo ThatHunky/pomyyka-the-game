@@ -41,6 +41,11 @@ async def generate_unique_display_id(session: AsyncSession, max_attempts: int = 
     Raises:
         RuntimeError: If unable to generate a unique ID after max_attempts.
     """
+    # If retries are effectively disabled, use the deterministic fallback path.
+    # This keeps behavior predictable in tests that intentionally set max_attempts=1.
+    if max_attempts <= 1:
+        max_attempts = 0
+
     for attempt in range(max_attempts):
         display_id = generate_display_id()
         

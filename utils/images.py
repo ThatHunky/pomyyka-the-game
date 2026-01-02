@@ -14,7 +14,7 @@ def save_generated_image(image_bytes: bytes, directory: str = "media/cards") -> 
         directory: Directory path for storing images (default: "media/cards").
 
     Returns:
-        Relative filepath to the saved image (e.g., "media/cards/{uuid}.png").
+        Relative filepath to the saved image (e.g., "media/cards/{uuid}.webp").
     """
     # Ensure directory exists
     cards_dir = Path(directory)
@@ -28,9 +28,9 @@ def save_generated_image(image_bytes: bytes, directory: str = "media/cards") -> 
             # If decoding fails, treat as raw bytes string
             image_bytes = image_bytes.encode() if isinstance(image_bytes, str) else image_bytes
 
-    # Generate UUID filename
+    # Generate UUID filename with WebP extension
     image_uuid = uuid4()
-    filename = f"{image_uuid}.png"
+    filename = f"{image_uuid}.webp"
     filepath = cards_dir / filename
 
     # Save to disk

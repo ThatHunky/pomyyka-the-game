@@ -727,7 +727,7 @@ Lines added: 322, lines removed: 1
 +             f"⚔️ **АТАКА:** {blueprint.stats['atk']}\n"
 +             f"🛡️ **ЗАХИСТ:** {blueprint.stats['def']}\n"
 +             f"💎 **Рідкість:** {blueprint.rarity.value}\n\n"
-+             f"📖 **Лоре:** {blueprint.lore}"
++             f"📖 **Лор:** {blueprint.lore}"
 +         )
 + 
 +         # Create callback data with blueprint info

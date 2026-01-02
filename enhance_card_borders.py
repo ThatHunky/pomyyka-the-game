@@ -272,28 +272,28 @@ def process_card(card_path: Path, rarity: str | None = None) -> None:
         traceback.print_exc()
 
 def main():
-    """Process all NORMAL card files in placeholders directory."""
+    """Process all placeholder card files in placeholders directory."""
     placeholders_dir = Path('assets/placeholders')
     
-    # Find all NORMAL card files
-    normal_cards = sorted(
-        list(placeholders_dir.glob('NORMAL_*.webp')) + 
-        list(placeholders_dir.glob('NORMAL_*.gif'))
+    # Find all placeholder card files
+    card_files = sorted(
+        list(placeholders_dir.glob('*.webp')) +
+        list(placeholders_dir.glob('*.gif'))
     )
     
-    if not normal_cards:
-        print('No NORMAL card files found in assets/placeholders/')
+    if not card_files:
+        print('No card files found in assets/placeholders/')
         return
     
-    print(f'Enhancing borders on {len(normal_cards)} NORMAL card images\n')
+    print(f'Enhancing borders on {len(card_files)} placeholder card images\n')
     print('=' * 60)
     
-    for card_path in normal_cards:
+    for card_path in card_files:
         process_card(card_path)
         print()
     
     print('=' * 60)
-    print(f'\nDone! {len(normal_cards)} cards now have beautiful decorative borders.')
+    print(f'\nDone! {len(card_files)} cards now have beautiful decorative borders.')
 
 if __name__ == '__main__':
     main()

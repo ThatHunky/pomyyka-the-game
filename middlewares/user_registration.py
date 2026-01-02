@@ -5,10 +5,10 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware, Bot
 from aiogram.types import BotCommandScopeChat, CallbackQuery, Message, TelegramObject
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 
 from database.models import User
-from database.session import get_session
+from database.session import first_session, get_session
 from logging_config import get_logger
 from utils.commands import get_all_commands, is_admin
 
@@ -32,34 +32,32 @@ class UserRegistrationMiddleware(BaseMiddleware):
             event: Telegram event (Message or CallbackQuery).
             data: Middleware data dictionary.
         """
-        # Extract user from different event types
-        user = None
-        if isinstance(event, Message) and event.from_user:
-            user = event.from_user
-        elif isinstance(event, CallbackQuery) and event.from_user:
-            user = event.from_user
+        # Extract user (prefer duck-typing to support test doubles)
+        user = getattr(event, "from_user", None)
 
         # Auto-register user if found
         if user:
-            async for session in get_session():
+            async with first_session(get_session()) as session:
                 try:
                     # Check if user exists
                     user_stmt = select(User).where(User.telegram_id == user.id)
                     result = await session.execute(user_stmt)
                     db_user = result.scalar_one_or_none()
 
-                    # Register if not exists
+                    # Register if not exists (cross-dialect; safe for tests on SQLite).
                     if not db_user:
-                        # Use PostgreSQL INSERT ON CONFLICT DO NOTHING for thread safety
-                        stmt = insert(User).values(
-                            telegram_id=user.id,
-                            username=user.username,
-                            balance=0,
+                        session.add(
+                            User(
+                                telegram_id=user.id,
+                                username=user.username,
+                                balance=0,
+                            )
                         )
-                        stmt = stmt.on_conflict_do_nothing(index_elements=["telegram_id"])
-
-                        await session.execute(stmt)
-                        await session.commit()
+                        try:
+                            await session.commit()
+                        except IntegrityError:
+                            # Another concurrent insert won; that's fine.
+                            await session.rollback()
 
                         logger.info(
                             "User auto-registered",
@@ -73,7 +71,6 @@ class UserRegistrationMiddleware(BaseMiddleware):
                         error=str(e),
                         exc_info=True,
                     )
-                break
 
             # Set admin commands if user is admin
             if is_admin(user.id):

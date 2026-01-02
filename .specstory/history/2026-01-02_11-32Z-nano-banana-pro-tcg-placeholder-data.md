@@ -496,7 +496,7 @@ Output mode: content
 
 | File | Content | Line |
 |------|------|------|
-| `.\handlers\admin_autocard.py` | `f"📖 **Лоре:** \{blueprint.lore\}"` | L448 |
+| `.\handlers\admin_autocard.py` | `f"📖 **Лор:** \{blueprint.lore\}"` | L448 |
 | `.\handlers\admin_autocard.py` | `"lore": blueprint.lore,` | L459 |
 | `.\services\ai_architect.py` | `target_user_id: int = Field(..., description="Target user ID for the card")` | L19 |
 | `.\services\ai_architect.py` | `card_name_ua: str = Field(..., description="Card name in Ukrainian")` | L20 |
@@ -537,7 +537,7 @@ Output mode: content
 | `.\utils\commands.py` | `Get list of all commands (player + admin) with Ukrainian descriptions.` | L42 |
 | `.\handlers\admin.py` | `user_prompt: User's art description prompt.` | L156 |
 | `.\handlers\admin.py` | `escaped_lore = escape_markdown(blueprint.lore)` | L469 |
-| `.\handlers\admin.py` | `f"📖 **Лоре:** \{escaped_lore\}\n\n"` | L478 |
+| `.\handlers\admin.py` | `f"📖 **Лор:** \{escaped_lore\}\n\n"` | L478 |
 | `.\services\art_forge.py` | `blueprint_prompt: User's description of the card subject.` | L58 |
 | `.\handlers\inline.py` | `description="Обмінятися картками з іншими гравцями",` | L65 |
 | `.\handlers\inline.py` | `description="Викликати гравця на дуель",` | L74 |

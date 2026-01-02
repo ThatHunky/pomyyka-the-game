@@ -162,27 +162,75 @@ class NanoBananaService(ArtForgeService):
             )
             return None
 
+    async def _extract_photo_from_message(self, bot: Bot, message) -> Optional[bytes]:
+        """
+        Extract photo bytes from a Telegram message.
+
+        Args:
+            bot: Bot instance.
+            message: Telegram message object (aiogram.types.Message).
+
+        Returns:
+            Photo bytes if message contains a photo, None otherwise.
+        """
+        try:
+            if not message or not message.photo:
+                return None
+
+            # Get largest photo size
+            largest_photo = message.photo[-1]
+            
+            # Download the file
+            photo_file = await bot.get_file(largest_photo.file_id)
+            photo_bytes = await bot.download_file(photo_file.file_path)
+
+            logger.debug("Extracted photo from message", message_id=message.message_id)
+            return photo_bytes.read()
+        except Exception as e:
+            logger.warning(
+                "Could not extract photo from message",
+                message_id=message.message_id if message else None,
+                error=str(e),
+            )
+            return None
+
     def _get_placeholder_path(self, biome: BiomeType, rarity: Rarity) -> Optional[str]:
         """
         Get path to placeholder image for biome/rarity combination.
+        
+        Checks if file exists and is not empty (minimum 1KB).
+        Falls back to NORMAL webp placeholders if biome-specific placeholder is empty/missing.
 
         Args:
             biome: Biome type.
             rarity: Rarity level.
 
         Returns:
-            Path to placeholder file if exists, None otherwise.
+            Path to placeholder file if exists and valid, None otherwise.
         """
-        placeholder_path = self._placeholders_dir / f"{biome.name}_{rarity.name}.png"
+        # Try biome-specific placeholder first (WebP only)
+        placeholder_path = self._placeholders_dir / f"{biome.name}_{rarity.name}.webp"
         
-        if placeholder_path.exists():
+        # Check if file exists and is not empty (minimum 1KB)
+        if placeholder_path.exists() and placeholder_path.stat().st_size > 1024:
             return str(placeholder_path)
         
+        # Fallback to NORMAL webp (these are known to be valid)
+        fallback_path = self._placeholders_dir / f"NORMAL_{rarity.name}.webp"
+        if fallback_path.exists() and fallback_path.stat().st_size > 1024:
+            logger.debug(
+                "Using NORMAL placeholder as fallback",
+                requested_biome=biome.name,
+                rarity=rarity.name,
+            )
+            return str(fallback_path)
+        
         logger.warning(
-            "Placeholder not found",
+            "No valid placeholder found",
             biome=biome.name,
             rarity=rarity.name,
-            path=str(placeholder_path),
+            biome_path=str(placeholder_path),
+            fallback_path=str(fallback_path),
         )
         return None
 
@@ -192,6 +240,8 @@ class NanoBananaService(ArtForgeService):
         chat_id: int,
         bot: Bot,
         user_name: Optional[str] = None,
+        custom_photo_bytes: Optional[bytes] = None,
+        custom_description: Optional[str] = None,
     ) -> tuple[Optional[str], Optional[CardBlueprint]]:
         """
         Generate a complete card for a user using AI-driven pipeline.
@@ -201,6 +251,8 @@ class NanoBananaService(ArtForgeService):
             chat_id: Telegram chat ID (for group photo).
             bot: Bot instance for API calls.
             user_name: Optional user name/username for persona-based generation.
+            custom_photo_bytes: Optional custom photo bytes from message (takes priority over profile photo).
+            custom_description: Optional custom description to include in blueprint generation.
 
         Returns:
             Tuple of (image_path, blueprint) if successful, (None, None) otherwise.
@@ -211,12 +263,41 @@ class NanoBananaService(ArtForgeService):
             # Step 1: Data Gathering
             logger.debug("Step 1: Gathering user data")
             messages = await self._fetch_user_messages(user_id, limit=200, min_length=20)
-            user_photo = await self._fetch_user_profile_photo(bot, user_id)
+            
+            # Use custom photo if provided, otherwise fall back to profile photo
+            if custom_photo_bytes:
+                user_photo = custom_photo_bytes
+                logger.debug("Using custom photo from message", user_id=user_id)
+            else:
+                user_photo = await self._fetch_user_profile_photo(bot, user_id)
+            
             group_photo = await self._fetch_group_chat_photo(bot, chat_id)
 
+            # If custom description provided, prepend it to messages for blueprint generation
+            if custom_description:
+                messages = [custom_description] + messages
+                logger.debug("Added custom description to messages", user_id=user_id)
+
+            # Allow generation with custom photo + description even if no messages
+            # If we have both custom photo and description, we can generate without user messages
             if not messages:
-                logger.warning("No messages found for user", user_id=user_id)
-                return None, None
+                if custom_photo_bytes and custom_description:
+                    # Use description as the only message for blueprint generation
+                    messages = [custom_description]
+                    logger.info(
+                        "Using custom photo + description for generation (no user messages)",
+                        user_id=user_id,
+                    )
+                elif custom_photo_bytes:
+                    # Photo only - use a generic description
+                    messages = ["A character card based on the provided image"]
+                    logger.info(
+                        "Using custom photo for generation (no user messages or description)",
+                        user_id=user_id,
+                    )
+                else:
+                    logger.warning("No messages found for user", user_id=user_id)
+                    return None, None
 
             logger.info(
                 "Data gathering complete",
@@ -224,12 +305,17 @@ class NanoBananaService(ArtForgeService):
                 message_count=len(messages),
                 has_user_photo=user_photo is not None,
                 has_group_photo=group_photo is not None,
+                has_custom_photo=custom_photo_bytes is not None,
+                has_custom_description=custom_description is not None,
             )
 
             # Step 2: Architect - Generate Blueprint
             logger.debug("Step 2: Generating card blueprint")
             blueprint = await self._card_architect.generate_blueprint(
-                messages, target_user_id=user_id, user_name=user_name
+                messages, 
+                target_user_id=user_id, 
+                user_name=user_name,
+                custom_photo_bytes=custom_photo_bytes
             )
 
             if not blueprint:
@@ -248,6 +334,25 @@ class NanoBananaService(ArtForgeService):
             logger.debug("Step 3: Generating card image")
             placeholder_path = self._get_placeholder_path(blueprint.biome, blueprint.rarity)
 
+            # Provide full card fields to the image model so it can render text onto the template.
+            # Without this, the model only sees the visual prompt and will often leave placeholders
+            # like "НАЗВА КАРТКИ" unchanged.
+            card_fields = {
+                "name": blueprint.name,
+                "biome": blueprint.biome.value,
+                "rarity": blueprint.rarity.value,
+                "atk": blueprint.stats.get("atk"),
+                "def": blueprint.stats.get("def"),
+                "meme": blueprint.stats.get("meme"),
+                "lore": blueprint.lore,
+                "attacks": blueprint.attacks,
+                "weakness": blueprint.weakness,
+                "resistance": blueprint.resistance,
+                "print_date": blueprint.print_date,
+                "dominant_color_hex": blueprint.dominant_color_hex,
+                "accent_color_hex": blueprint.accent_color_hex,
+            }
+
             image_path = await self.forge_card_image(
                 blueprint_prompt=blueprint.raw_image_prompt_en,
                 biome=blueprint.biome,
@@ -255,6 +360,7 @@ class NanoBananaService(ArtForgeService):
                 placeholder_path=placeholder_path,
                 user_photo_bytes=user_photo,
                 group_photo_bytes=group_photo,
+                card_fields=card_fields,
             )
 
             if not image_path:

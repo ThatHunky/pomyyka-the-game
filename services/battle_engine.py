@@ -191,8 +191,9 @@ def calculate_card_power(card_template: "CardTemplate", chat_biome: BiomeType) -
     atk = stats.get("atk", 0)
     def_stat = stats.get("def", 0)
 
-    # Apply biome bonus if card's biome matches chat biome
-    if card_template.biome_affinity == chat_biome:
+    # Apply biome bonus only for non-NORMAL chat biomes when the card matches.
+    # NORMAL is the baseline biome and should not grant a bonus.
+    if chat_biome != BiomeType.NORMAL and card_template.biome_affinity == chat_biome:
         atk = int(atk * BIOME_BONUS_MULTIPLIER)
         def_stat = int(def_stat * BIOME_BONUS_MULTIPLIER)
         logger.debug(

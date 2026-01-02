@@ -26,7 +26,10 @@ globs: *
 *   pydantic: >=2.10 (>=2.10,<3.0)
 *   redis: ^5.2.0 (>=5.2.0,<6.0)
 *   Pillow >=10.0.0
-*   imageio[ffmpeg] >=2.31.0 (For MP4 encoding) OR opencv-python>=4.8.0 (Alternative video encoding option) Requires ffmpeg binary to be installed on the system.
+*   imageio[ffmpeg] >=2.31.0 (For MP4 encoding) Requires ffmpeg binary to be installed on the system.
+*   opencv-python>=4.8.0 (Alternative video encoding option) Requires ffmpeg binary to be installed on the system.
+*   numpy>=1.24.0
+*   aiosqlite>=0.20.0
 
 ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
@@ -39,8 +42,10 @@ globs: *
     ```yaml
     volumes:
       - ./data/chat_exports:/app/data/chat_exports
+      - ./assets:/app/assets
     ```
     *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
+    *   The `./assets` directory on the host is mounted into the container at `/app/assets`. This allows the container to access and modify card assets.
 *   The contents of the chat export folder (specifically *.json and *.txt files) must be added to `.gitignore`.
 *   Card Placeholder Specification: `CARD_PLACEHOLDER_SPEC.md` - Defines the layout, data fields, and visual style for generating a placeholder card image resembling Pokemon TCG cards, used for generative editing.
     *   The specification includes the following fields: Card Name, Rarity Indicator, Biome Type, Artwork Area, Attack Stat (ATK), Defense Stat (DEF), Meme Stat, Lore/Flavor Text.
@@ -58,9 +63,10 @@ globs: *
         *   Психічний (🔮)
         *   Техно (⚙️)
         *   Темний (🌑)
-*   Card Placeholder Files: Empty `.png` files (with transparent backgrounds) for different card types (biome/rarity/type) are located in dedicated folders. These placeholders will be replaced with generated content.
-    *   Placeholders should be named with the format: `assets/placeholders/{biome}_{rarity}.png`.
-    *   Both PNG and WebP versions are now available in `assets/placeholders/`. The `nano_banana.py` service currently uses PNG files, so you may want to update it to use WebP for production.
+*   Card Placeholder Files: Empty `.webp` files (with transparent backgrounds) for different card types (biome/rarity/type) are located in dedicated folders. These placeholders will be replaced with generated content.
+    *   Placeholders should be named with the format: `assets/placeholders/{biome}_{rarity}.webp`.
+    *   If there isn't a proper template in the `assets\placeholders` (non-empty, fully correct WebP normal ones), it must use the one that's fully correct.
+        *   Placeholder files must be non-empty to be considered valid. The minimum file size is 1KB. If a biome-specific placeholder is missing or empty, the system must fallback to using the `NORMAL_{rarity}.webp` placeholder.
 *   AI Studio Prompts: `PROMPTS_FOR_AI_STUDIO.md` - Contains JSON prompts for generating card template placeholders using Gemini / Imagen 3 in AI Studio.
     *   The file contains JSON prompts for generating card template placeholders using Gemini / Imagen 3 in AI Studio.
     *   To use the prompts:
@@ -88,6 +94,9 @@ globs: *
         4.  **Lore**: Flavor text in Ukrainian (small italic font)
         5.  **Stats**: ATK (left), MEME (center), DEF (right)
         6.  **Footer**: Weakness (bottom left), Resistance (bottom right), Print date (bottom center)
+*   Video Effects Templates: `VIDEO_EFFECTS_TEMPLATES.md` - Outlines video animation effects for card animations.
+*   Test Suite Readme: tests/README.md - Provides instructions on how to run the test suite.
+*   Resolution: Use 1080p resolution (1080x1920 portrait). Only use .webp files.
 
 ## CODING STANDARDS
 
@@ -108,7 +117,11 @@ globs: *
 *   Card Art Style:
     *   The card art style should resemble Pokemon TCG cards, not "cyberpunk trash."
 *   Card Generation:
-    *   Card generation will use Image Integration Strategy: Option A (AI-driven). The "Nano Banana Pro" (Gemini 3 Pro) model accepts the placeholder and user photo as inputs to generate the final card image directly.
+    *   Card generation will use Image Integration Strategy: Option A (AI-driven). The "Nano Banana Pro" (Gemini 3 Pro) model accepts the placeholder and user photo as inputs to generate the final card image directly. However, the image generation model (`gemini-3-pro-image-preview`) accepts images as base64 encoded data in the `contents` array in addition to text prompts.
+    *   The card generation process when a user sends an image and description with the `/autocard` command must follow this flow:
+        1.  The user sends the message with the `/autocard` command.
+        2.  The image and description get sent to the Flash model.
+        3.  The JSON result, the sent image, and the correct (non-empty) placeholder get sent to the Nano Banana Pro model, which is instructed to generate (edit the placeholder) with the provided description and reference image.
     *   `CardGeneratorService` (formerly `NanoBananaService`) will use group chat photo/user photo (if available) to generate card illustrations.
     *   `CardGeneratorService` should generate appropriate gradient accents for cards.
     *   `CardGeneratorService` must integrate the photo into the card design.
@@ -132,15 +145,58 @@ globs: *
         *   RARE - Double blue border
         *   EPIC - Ornate purple border with glow and decorative elements
         *   LEGENDARY - Ornate gold/orange border with glow and corner decorations
-        *   MYTHIC - Ornate red border with glow and decorative elements
+        *   MYTHIC - Ornate red border with glow and corner decorations
     *   Rounded corners should be applied.
-*   Cards are sent as normal images, and animated ones as GIFs (`.mp4`s in Telegram)
-    *   For animated cards, use the animated WebP versions
-    *   Cards are sent as normal images, and animated ones as GIFs (`.mp4`s in Telegram)
-    *   Animated cards (Epic, Legendary, Mythic) should have holographic/glowing effects.
-    *   When sending cards:
-        *   Common/Rare cards: Send as photos
-        *   Epic/Legendary/Mythic cards: Send as MP4 videos (if available) or GIFs (if MP4 unavailable), using `answer_animation` to ensure they play inline like GIFs.
+*   Cards are sent as normal images, and animated ones as MP4 videos (sent as animations). Telegram prefers `.mp4` (H.264) sent as an animation. It will play smoother and load faster than a legacy GIF.
+    *   Common/Rare cards: Send as photos
+    *   Epic/Legendary/Mythic cards: Send as MP4 videos (sent as animations)
+    *   Animated cards must have a frame rate of 20 fps and be slowed down.
+*   `/autocard` Photo Generation:
+    *   The `/autocard` command now supports generating cards using photos.
+    *   Photos can be sent directly with the `/autocard` command (with or without a caption) or by replying to a message containing a photo.
+    *   If a caption is provided with the photo, it will be used as a description during blueprint generation.
+    *   The `CardGeneratorService` will use the provided photo (if available) instead of the user's profile picture.
+    *   When using `/autocard` with a photo but no user is specified (either by replying or with a username/userID in the caption), the message sender will be used as the target.
+    *   Generation is allowed with only a photo and description, even without user messages.
+*   Card Naming: The card name should be generated on the context, not on the user's name. It can be absolutely custom - the model should be able to generate it.
+*   Generated cards must have options to:
+    *   Regenerate the image (keeping the same blueprint data).
+    *   Edit all fields (stats, name, biome, rarity, lore, attacks, etc.) manually, which should then automatically regenerate the image.
+    *   These options should be available before the "Confirm and add/cancel" stage.
+    *   When regenerating the image, the blueprint data (name, stats, lore) must be kept, and only the image should be regenerated.
+    *   When editing manually, all fields (stats, name, biome, rarity, lore) should be editable.
+    *   After editing stats/fields, the image must automatically regenerate with the new data.
+*   **Image and Description Consistency**: When generating cards using the `/autocard` command with a photo, the generated card description and lore must accurately reflect the content of the provided photo. The AI should prioritize analyzing the photo to generate the card's description and lore, using user messages and context as secondary information. The system instruction in `services/ai_architect.py` emphasizes this requirement:
+    *   "PHOTO ANALYSIS (CRITICAL):
+        *   If a photo/image is provided in the context, you MUST analyze it carefully and base the card's description, lore, and visual prompt on what you see in the photo
+        *   The photo content should be the PRIMARY source for card generation - describe what's actually visible in the image
+        *   The lore_ua should accurately describe what's shown in the photo (people, objects, setting, mood, etc.)
+        *   The raw_image_prompt_en should describe the visual elements you see in the photo
+        *   The card_name_ua should be inspired by what's in the photo
+        *   User messages and context are SECONDARY when a photo is provided - use them only for supplementary thematic elements
+        *   If no photo is provided, base the card on user messages and context as usual"
+*   **Card Info Generation**: All card info must be correctly generated and synced, including the card "production" date, which must be specified in the prompt. The prompt in `services/ai_architect.py` MUST include the current month/year in MM/YYYY format.
+    *   The `print_date` field MUST be set to exactly '{current_print_date}' (current month/year in MM/YYYY format). Do not use any other date.
+*   Meme Stat: The AI generates `stats_meme` (0-100), reflecting the playful nature of the game. It MUST be included during conversion from AI blueprint to local CardBlueprint and when saving to the database.
+*   **Graceful Callback Handling**: Implement `utils/telegram_utils.py` with a `safe_callback_answer` function to handle "query is too old" TelegramBadRequest errors in callback queries. Replace all instances of `callback.answer` with `safe_callback_answer(callback)` in handler files (`handlers/admin_autocard.py`, `handlers/admin.py`, `handlers/battles.py`, `handlers/drops.py`, `handlers/player.py`, and `handlers/trading.py`). Ensure to add necessary imports from `utils/telegram_utils.py`.
+*   **Animated Card Video Effects**: The video effects for animated cards must have a duration of 5 seconds and be looped.
+*   **Media Message Handling**: When editing messages, the bot must use `edit_caption()` for photo/animation/video messages and `edit_text()` for text messages. Specifically, in `handlers/admin_autocard.py`:
+    *   In `handle_autocard_approve`, update the condition checking `callback.message.photo` to also include `callback.message.animation` and `callback.message.video`.
+    *   Use `edit_caption` if any of these media types are present.
+    *   Fallback to `edit_text` only if it's strictly a text message (or doesn't match media types).
+    *   This logic should mirror the logic already present in `handle_autocard_cancel`.
+*   **Card Text Generation**: Ensure the image generation model incorporates blueprint text fields by including all necessary blueprint JSON fields in the prompt. The `card_render_prompt` should be used instead of `raw_image_prompt_en` to include card names, stats and lore. If the AI struggles to accurately render text, consider using Pillow to overlay the text on the generated image. This provides more deterministic control over text rendering.
+*   **User-Friendly Editing**: Implement inline keyboard buttons for editing generated cards, replacing the raw JSON editing. The options should include "Edit name", "Edit biome", and "Edit stats". After any edits, the image should automatically regenerate with updated information.
+*   **`forge_card_image` Function**: The `forge_card_image` function should accept card fields or a "card_text" structure to ensure necessary values are provided for image generation.
+*   **Placeholder Image Conversion**: Convert all PNG placeholders in `assets/placeholders/` to WebP format. A script `convert_placeholders_to_webp.py` should be created to handle this conversion and apply borders to the outputs.
+*   **`/addcard` Command Enhancement**:
+    *   Modify the `/addcard` command to allow manual card creation by either:
+        *   Generating an image via AI, as before.
+        *   Uploading a custom image.
+    *   Implement a manual flow with simple stats editing, name, and other relevant fields.
+    *   The `/addcard` implementation and how it currently generates images should be located.
+    *   Add a "manual flow" where the user can either generate an image or upload one.
+    *   Include a simple "edit stats/name/etc" step before saving.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -149,6 +205,7 @@ globs: *
 *   Since `display_id` is a new required field, you'll need to:
     1.  Run a database migration to add the column.
     2.  Populate display IDs for any existing cards in the database.
+*   The Dockerfile must install `ffmpeg`.
 
 ## DEBUGGING
 
@@ -159,10 +216,144 @@ globs: *
     *   When attempting the command, check the logs to see what user ID is being checked and what admin IDs are configured.
 *   If the callback data exceeds Telegram's 64-byte limit, store the data in Redis using the `SessionManager` and pass only the UUID in the callback.
 *   When editing the photo message caption in `handlers/admin_autocard.py` with `edit_text`, ensure that the `chat_id` and `message_id` are correctly passed and that the caption is properly formatted and escaped. The handlers `handle_autocard_cancel` and `handle_autocard_approve` should be reviewed for potential issues. Specifically:
-    *   Ensure that the code checks if the message is a photo (`callback.message.photo`).
-    *   Use `edit_caption()` for photo messages.
+    *   Ensure that the code checks if the message is a photo (`callback.message.photo`) or animation (`callback.message.animation`) or video (`callback.message.video`).
+    *   Use `edit_caption()` for photo/animation/video messages.
     *   Use `edit_text()` for text messages.
     *   Ensure all user provided text is escaped using `escape_markdown()`.
+*   Missing `datetime` import in `services/ai_architect.py`
+*   Schema fix worked: blueprint generation succeeded (line 877). Image generation is failing with "Unable to process input image". Adding image validation and format detection: Unable to process input image. Adding image validation and format detection:
+*   Investigate animated GIF playback issues. Desktop TG app shows them as gifs but doesn't autoplay, mobile shows them as broken and as videos. Research the documentation used for sending the media, etc.
+    *   **Analysis and Fixes**:
+        *   **Problem**:
+            *   Desktop TG: Shows animations as GIFs but doesn't autoplay
+            *   Mobile TG: Shows animations as broken and displays them as videos
+        *   **Root Cause Analysis**:
+            *   The bot generates MP4 files using ffmpeg with these parameters:
+                *   Codec: H.264 (libx264)
+                *   Pixel Format: yuv420p
+                *   Frame Rate: 20 fps
+                *   movflags: faststart
+                *   No audio track
+            *   The bot sends them using `answer_animation()` method, which is correct.
+            *   Identified Issues:
+                1.  **Missing Loop Flag in MP4**: Telegram needs MP4 files to have explicit loop metadata. The current ffmpeg command doesn't set the loop count in the MP4 container.
+                    *   Fix: Add `-stream_loop -1` (infinite loop) flag to ffmpeg command.
+                2.  **Missing Duration Parameter**: When sending animations via `answer_animation()`, Telegram benefits from knowing the duration upfront.
+                    *   Fix: Calculate and pass `duration` parameter to `answer_animation()`.
+                3.  **Possible Profile/Level Issues**: H.264 profile and level might affect compatibility across different Telegram clients.
+                    *   Fix: Explicitly set H.264 profile to `baseline` or `main` for maximum compatibility.
+                4.  **Filename Extension Confusion**: Sending MP4 files might confuse some Telegram clients. Telegram officially supports both MP4 and GIF for animations.
+                    *   Fix: Consider adding explicit `filename` parameter with `.gif` extension when sending MP4 animations.
+                5.  **Missing Width/Height Parameters**: Not specifying width and height might cause display issues on some clients.
+                    *   Fix: Pass `width` and `height` to `answer_animation()`.
+        *   **Proposed Solutions**:
+            1.  **Improve MP4 Encoding (Recommended)**:
+                *   Modify the ffmpeg command in `services/card_animator.py` to:
+                    ```bash
+                    ffmpeg -framerate 20 -i frame_%04d.png \
+                      -c:v libx264 -profile:v baseline -level 3.0 \
+                      -pix_fmt yuv420p \
+                      -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+                      -movflags +faststart \
+                      -loop 0 \
+                      -an \
+                      -y output.mp4
+                    ```
+            2.  **Add Metadata to answer_animation()**:
+                *   Pass additional parameters:
+                    ```python
+                    await message.answer_animation(
+                        animation=animation_file,
+                        duration=2,  # Total duration in seconds
+                        width=640,   # Actual width
+                        height=896,  # Actual height
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                    ```
+            3.  **Try GIF Format Instead**: Fallback to generating actual GIF files using imageio or Pillow if MP4 continues to have issues.
+            4.  **Use Video with Loop Flag**: As alternative, send as `answer_video()` with `supports_streaming=True`.
+        *   **Recommended Implementation Order**:
+            1.  Fix ffmpeg encoding with proper loop and profile flags (high impact, low risk)
+            2.  Add duration/width/height to answer_animation() (medium impact, low risk)
+            3.  Test with actual GIF generation as fallback (low impact, medium effort)
+        *   **Additional Observations**: From the user's message: "Трохи похуйовило бо незакінчені темплейти" suggests there might also be issues with incomplete templates, not just animation format.
+    *   **Implementation Status: ✅ COMPLETED**
+        *   **Changes Made:**
+            1.  **services/card_animator.py**
+                *   ✅ Added `-profile:v baseline` for maximum compatibility
+                *   ✅ Added `-level 3.0` for H.264 level specification
+                *   ✅ Fixed `-movflags` syntax to `+faststart`
+                *   ✅ Added `-preset fast` for faster encoding
+            2.  **utils/animations.py** (NEW FILE)
+                *   ✅ Created `send_card_animation()` helper function
+                *   ✅ Automatically extracts width/height from base image
+                *   ✅ Sets duration parameter (2 seconds)
+                *   ✅ Provides consistent error handling
+            3.  **handlers/admin_autocard.py**
+                *   ✅ Updated to use `send_card_animation()` helper
+                *   ✅ Removed manual `answer_animation()` calls
+            4.  **handlers/player.py**
+                *   ✅ Updated to use `send_card_animation()` helper
+                *   ✅ Improved animation sending in inventory view
+            5.  **handlers/admin.py**
+                *   ✅ Updated to use `send_card_animation()` helper
+                *   ✅ Improved test command animation sending
+        *   **Testing Instructions:**
+            1.  **Regenerate existing animations** (optional):
+                ```bash
+                python regenerate_all_animations.py
+                ```
+            2.  **Generate a new card** with Epic/Legendary/Mythic rarity:
+                ```bash
+                /autocard @username
+                ```
+            3.  **Test on Desktop Telegram**:
+                *   Animation should autoplay immediately
+                *   Should loop continuously
+                *   Should display as GIF (not video)
+            4.  **Test on Mobile Telegram**:
+                *   Animation should autoplay on open
+                *   Should not show video player controls
+                *   Should loop smoothly
+        *   **Expected Results:**
+            *   ✅ Desktop: Animations autoplay and loop
+            *   ✅ Mobile: Animations display correctly (not as broken videos)
+            *   ✅ Both: Smooth playback without stuttering
+            *   ✅ File sizes: Smaller than equivalent GIFs
+        *   **Rollback Plan (if needed):**
+            *   If issues persist, you can:
+                1.  Revert ffmpeg changes in `services/card_animator.py`
+                2.  Remove `utils/animations.py`
+                3.  Restore original `answer_animation()` calls in handlers
+                4.  Use GIF format instead of MP4 (set in card_animator.py)
+*   **Card Info Generation**: Investigate and fix issues related to incorrect card information generation. This is a high priority.
+    *   The image generation model isn't incorporating blueprint text fields, just leaving placeholders. This could be related to the way prompts are structured in the "NanoBanana" service. It seems the final card image generation might not be including necessary blueprint JSON fields in the prompt. It's possible they avoided instructing the model to produce text to prevent inaccuracies, given how generative models handle text.
+    *   To fix this, pass full card fields into the image prompt. Extend `ArtForgeService.forge_card_image(...)` and `_generate_image_sync(...)` to accept an optional `card_fields: dict | None`. When a placeholder is used, append a strict “CARD_FIELDS_TO_RENDER” block to the prompt:
+        *   Card name (UA)
+        *   Biome label (emoji + UA)
+        *   Rarity badge (emoji + UPPERCASE English)
+        *   Stats lines: `⚔️ ATK`, `🎭 MEME`, `🛡️ DEF`
+        *   Attacks list (name/type/damage/energy/effect/status)
+        *   Lore (UA)
+        *   Print date
+        *   Weakness/resistance
+    *   Add explicit instructions: “**Replace placeholder text** (e.g. `НАЗВА КАРТКИ`, `Приклад Атаки …`, default stats) with these exact values; don’t invent new text; keep the template layout.”
+    *   Update callers to pass `card_fields`:
+        *   `services/nano_banana.py`: build a dict from the generated `CardBlueprint` and pass it into `forge_card_image(...)`.
+        *   `handlers/admin_autocard.py`: in `_regenerate_card_image(...)`, pass the Redis `blueprint_data` as `card_fields` so regenerations after edits also render text.
+    *   Blueprint updates currently don’t persist (hidden bug). `SessionManager.store_blueprint()` always creates a new UUID. Current code uses it for “updates” and ignores the returned ID, so callbacks keep pointing at stale data. To fix this, add `SessionManager.update_blueprint(blueprint_id, blueprint_data, ttl=...)` in `services/session_manager.py` and replace the incorrect “update via store_blueprint” calls.
+    *   Replace JSON editing with button-driven editor in `handlers/admin_autocard.py`: Replace the current `CardEditStates.waiting_for_json` flow with an inline **edit menu**:
+        *   Top-level edit keyboard: `📛 Назва`, `🌍 Біом`, `💎 Рідкість`, `📊 Стати (ATK/DEF/MEME)`, `📖 Лор`, `⚡ Атаки`, `🖼 Prompt`, `🗓 Дата`, `⬅️ Назад`.
+        *   Biome/rarity/type/status selections are done via inline choices (no typing).
+        *   Text/number fields prompt the admin for a value (FSM `waiting_for_value`), validate, then regenerate.
+        *   After any edit, automatically:
+            *   update the Redis blueprint via `update_blueprint`
+            *   regenerate the image via `_regenerate_card_image`
+            *   update the preview caption (and keep the four main actions available).
+    *   Escape Markdown V2 / Markdown special chars when building captions and editor text via `utils/text.py::escape_markdown()`.
+    *   Keep callback data short (blueprint_id + small field/value codes) to avoid Telegram 64-byte limits.
 
 ## INFRASTRUCTURE
 
@@ -174,8 +365,11 @@ globs: *
     ```yaml
     volumes:
       - ./data/chat_exports:/app/data/chat_exports
+      - ./assets:/app/assets
     ```
     *   The `data/chat_exports` directory on the host is mounted into the container at `/app/data/chat_exports/`. Place JSON files in `data/chat_exports/` on your host machine, and they are automatically accessible inside the container at `/app/data/chat_exports/`. No need to copy files into the container or rebuild images.
+    *   The `./assets` directory on the host is mounted into the container at `/app/assets`. This allows the container to access and modify card assets.
+*   The Dockerfile must install `ffmpeg`. The `assets/placeholders/` directory is mounted as a volume to allow the container to modify card assets.
 
 ## REDIS
 
@@ -195,216 +389,4 @@ globs: *
 *   The `SessionManager` should also include methods for storing and retrieving blueprint data for autocard flows, using UUIDs as keys. These methods are:
     *   `store_blueprint(blueprint(blueprint_data: dict, ttl: int = 3600) -> str`: Stores blueprint data in Redis for autocard callbacks.
     *   `get_blueprint(blueprint_id: str) -> Optional[dict]`: Gets blueprint data from Redis.
-    *   `delete_blueprint(blueprint_id: str) -> bool`: Deletes blueprint data from Redis.
-
-## MIDDLEWARE
-
-*   Implement `middlewares/group_tracker.py` to track group chats.
-*   Create `ChatTrackingMiddleware` that intercepts every update.
-*   If `chat.type` is `supergroup` or `group`:
-    *   Upsert the `GroupChat` table (INSERT ON CONFLICT DO NOTHING). This ensures we have a list of all groups the bot is in.
-*   Implement `middlewares/logger.py` to log messages in group chats.
-    *   Create a new middleware that runs after `GroupTrackingMiddleware`.
-    *   **Logic**: For every text message in a group chat:
-        *   Fire-and-forget an async task to insert the message into `MessageLog`.
-    *   **Optimization**: Do *not* log commands (starting with `/`).
-*   **Middleware Event Handling**: When registering middlewares using `dp.message.middleware()`, the `event` parameter is a `Message` object, not an `Update` object.
-*   User registration should be triggered on *any* interaction, not just specific commands like `/start`.
-    *   **Implementation**: Modify the `get_or_create_user` function or equivalent to be called in a middleware that intercepts all messages.
-    *   Implement `middlewares/user_registration.py` to automatically register users on any interaction (messages, callback queries, etc.).
-    *   Register the middleware for both `message` and `callback_query` events.
-    *   Uses PostgreSQL `ON CONFLICT DO NOTHING` for thread-safe registration.
-    *   After user registration, check if user is admin. If admin, set their commands to include admin commands using `Bot.set_my_commands()`, `BotCommandScopeChat(chat_id=user_id)`, and `get_all_commands()`.
-
-## HANDLERS
-
-*   Create `handlers/drops.py` to handle drop claims.
-    *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
-        *   **Note**: All handler files (`handlers/drops.py`, `handlers/admin.py`, `handlers/admin_autocard.py`) already use the correct import path: `from aiogram.filters.callback_data import CallbackData`.
-    *   **Loop Fix**: In `_award_card_and_update_message`, remove the `finally:` block and move the `break` statement to the end of the `try` block.
-    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Instead, place the `break` statement as the last line inside the `try` block.
-    *   **User Creation**: When a user claims a drop, the `_award_card_and_update_message` function automatically creates a User record if one doesn't exist.
-*   Create `handlers/admin.py` to handle admin commands.
-    *   **Import Fix**: Use `from aiogram.filters.callback_data import CallbackData` instead of `from aiogram.filters import CallbackData`.
-    *   **Python 3.14 Safety**: Remove the `finally:` block containing `break`. Rely on `get_session()`'s natural termination if it yields only once.
-    *   `/import_chat <filename>` - Import chat history from Telegram JSON export.
-    *   **Usage**:
-        1.  Place the `result.json` file in `data/chat_exports/`
-        2.  Run `/import_chat result.json` in the bot.
-*   Implement a Callback Query Handler for data `claim_drop`.
-*   Call `DropManager.try_claim_drop(message.message_id, user.id)`.
-    *   **If Success**:
-        *   Award card to user in DB.
-        *   Edit message text: "✅ **[User]** блискавично схопив [Card Name]!" (Use Ukrainian).
-    *   **If Fail**:
-        *   Answer callback query with alert: "❌ Хтось виявився спритнішим!" (Alert/Toast).
-*   Implement Admin Card Creation Flow in `handlers/admin.py`.
-    *   **FSM**: States `WaitingForName`, `WaitingForArtPrompt`, `WaitingForStats`.
-    *   `/newcard` -> Input Name.
-    *   Select Biome (Inline Keyboard of Biomes).
-    *   Input Prompt -> Gen Art -> Review.
-    *   Input Stats -> Save.
-    *   **Nano Banana Integration**:
-        *   Use `NanoBananaService` (now `CardGeneratorService`) to generate art.
-        *   Prompt: "Trading card art, [User Prompt], style of [Biome Style]".
-        *   The `generate_card_image()` function in `handlers/admin.py` generates card image using Nano Banana Pro (Gemini 3 Pro Image).
-        *   To complete the image generation, implement the actual API call in `generate_card_image()` based on your image generation service (Nano Banana or another service). The function should return a relative filepath to saved image.
-        *   The flow continues even if image generation fails (image_url can be None), allowing cards to be created without images if needed.
-*   Implement `handlers/admin_autocard.py`.
-    *   Command: `/autocard`
-    *   Supports three modes:
-        *   Reply mode: `/autocard` (reply to a message)
-        *   Username mode: `/autocard @username`
-        *   UserID mode: `/autocard 392817811`
-    *   **Logic Flow (Async):**
-        1.  **Trigger**: Admin replies `/autocard` to a user message, or uses `/autocard @username` or `/autocard userID`.
-        2.  **Feedback**: Bot sends "🕵️‍♂️ Аналізую особистість [User]..." (Analyzing personality...).
-        3.  **Fetch Context**:
-            *   DB Query: Select last 50 messages from `MessageLog` for this `target_user_id`.
-            *   Flatten into a list of strings.
-        4.  **Architect Step**:
-            *   Bot edits message: "🧠 Проєктую архітектуру картки..." (Designing card architecture...).
-            *   Call `CardArchitectService.generate_blueprint(logs, target_user_id, target_user_name)`. Pass the `target_user_id` and `target_user_name` to the service.
-        5.  **Art Forge Step**:
-            *   Bot edits message: "🎨 Кую візуал у нано-горні..." (Forging visuals in нано-горні...).
-            *   Call `ArtForgeService.forge_card_image(blueprint.raw_image_prompt_en, blueprint.biome)`.
-        6.  **Preview & Confirmation**:
-            *   Bot deletes status message.
-            *   Send Photo (the generated image) with caption formatted using `blueprint` data (Name, Stats, Lore, Biome emoji). Use `FSInputFile` to send local files.
-            *   Attach Inline Keyboard: "✅ Затвердити та Видати" (Approve & Issue) or "❌ Скасувати".
-        7.  **Finalize (On Button Click)**:
-            *   Save `CardTemplate` to DB.
-            *   Create `UserCard` for the target user instantly.
-            *   Edit message: "🎉 Картку [Card Name] створено та видано [User]!"
-    *   The `escape_markdown()` function from `utils.text` should be used when sending the initial feedback message with the user's display name.
-    *   **User Creation**: The `admin_autocard.py` handler automatically creates a User record if one doesn't exist when awarding a card.
-    *   **Usage**:
-        *   `/autocard` - Reply to a user's message (existing behavior)
-        *   `/autocard @username` - Use username
-        *   `/autocard 392817811` - Use userID
-    *   Due to Telegram's 64-byte limit on callback data, store the blueprint data in Redis using the `SessionManager` and pass only the UUID in the callback.
-    *   When handling the Approve & Issue or Cancel buttons:
-        *   Check if the message is a photo (`callback.message.photo`).
-        *   Use `edit_caption()` for photo messages.
-        *   Use `edit_text()` for text messages.
-        *   Ensure all user provided text is escaped using `escape_markdown()`.
-*   Create `handlers/player.py` to handle player commands.
-    *   Implement `/start` handler that:
-        *   Gets or creates User record using pattern from `handlers/drops.py`.
-        *   Responds with welcome message in Ukrainian.
-        *   Logs the registration event.
-        *   Sends main menu keyboard.
-    *   Implement `/menu` handler that:
-        *   Shows main menu keyboard.
-    *   Implement `/me` or `/profile` handler that:
-        *   Shows user profile with stats and inline keyboard.
-    *   Implement `/inventory` handler that:
-        *   Shows user's card collection with pagination and inline keyboard.
-    *   Implement `/stats` handler that:
-        *   Shows detailed statistics dashboard with inline keyboard.
-    *   Implement `/help` handler that:
-        *   Shows help/guide with inline keyboard.
-    *   **`/start` Command**: The `/start` command is informational only and not strictly required for a user to receive cards. Card distribution handlers automatically create users if they don't exist. If `/start` should be mandatory, a check needs to be added to the card award functions.
-    *   **Reply Keyboard**: Reply keyboards (persistent buttons at the bottom) only work in private chats with the bot, not in group chats. Test by messaging the bot privately.
-        *   Appears after `/start` or `/menu`.
-        *   Shows: 📊 Профіль, 🎴 Колекція, 📈 Статистика, ❓ Допомога.
-    *   **Inline Keyboards**: Inline Keyboards (buttons below messages) work everywhere.
-        *   Appear with `/profile`, `/inventory`, `/stats`, `/help`.
-        *   Used for card details, pagination, and navigation.
-    *   **User Registration**: User registration should be triggered on *any* interaction, not just specific commands like `/start`.
-        *   **Implementation**: Modify the `get_or_create_user` function or equivalent to be called in a middleware that intercepts all messages.
-        *   Now handled by `middlewares/user_registration.py`
-    *   **Card Scrapping:**
-        *   Implement `handle_scrap_card_request()` to show the scrapping confirmation message and reward amount.
-        *   Implement `handle_scrap_card_confirm()` to delete the card and award scraps to the user.
-        *   Implement `get_scrap_reward()` to calculate the scrap reward based on card rarity.
-    *   **Main Menu Navigation**: Use inline keyboards for main menu navigation when editing messages.
-        *   Implement `get_main_menu_inline_keyboard()` in `utils/keyboards.py` to return an `InlineKeyboardMarkup` with the main menu options.
-        *   Update `handle_menu_navigation` in `handlers/player.py` to use `get_main_menu_inline_keyboard()`.
-        *   Implement callback query handlers for all navigation actions ("profile", "inventory", "stats", "help").
-    *   The inventory list and card detail view should display the card's `display_id`.
-        *   Inventory list: `🆔 POM-A1B2 | ⚔️ {stats.get('atk', 0)} / 🛡️ {stats.get('def', 0)}`
-        *   Card detail view: `🆔 **ID:** {user_card.display_id}`
-*   Create `handlers/inline.py` to handle inline queries for player interactions (trading, battles, etc.).
-    *   `handle_inline_query()` - main menu on `@botname` call:
-        *   Trading
-        *   Duel challenge
-        *   Profile view
-        *   Card collection
-    *   Card search by name.
-    *   `handle_chosen_inline_result()` - placeholder for session management.
-*   Extract trading logic into separate handler file: `handlers/trading.py`
-    *   All trade-related callback handlers
-    *   Trade execution logic with atomic transactions
-    *   Validation (card ownership, session expiry)
-*   Create `handlers/battles.py` with full battle flow: challenge, accept, stake, deck selection, battle execution
-*   Command hints (descriptions) are implemented for all bot commands using Telegram's `setMyCommands` API.
-    *   Regular users see only player commands.
-    *   Admin users see both player and admin commands.
-    *   Commands are set at bot startup and dynamically when admin users interact.
-*   Add a new admin command `/createcommoncard` that creates reusable card templates using AI generation from a detailed prompt.
-    *   The AI should understand it's creating a common/meme card (like "Шлюхобот")
-    *   Support ALL rarities (Common, Rare, Epic, Legendary, Mythic) - AI should choose appropriate rarity based on prompt, or admin can specify
-    *   The AI should understand it's creating a reusable template card (not user-specific)
-    *   For meme cards like "Шлюхобот", AI should typically choose Common or Rare rarity unless specified otherwise
-    *   **Usage**: `/createcommoncard <detailed prompt>` (optionally with rarity hint)
-        *   Example: `/createcommoncard Шлюхобот - вульгарний мемний робот з техно біому, низька рідкість`
-    *   The AI architect service already supports all rarities in its system prompt
-*   Implement the admin command `/test_normals` to send all NORMAL card templates as a test.
-    *   Admin-only: checks admin status before executing.
-    *   Sends all NORMAL cards: Common, Rare, Epic, Legendary, Mythic.
-    *   Uses animated versions when available: Epic, Legendary, Mythic use `*_animated.gif` if present.
-    *   Sends as photos or GIFs: displays normal cards as photos, and animated ones as GIFs.
-    *   Rate limiting: 0.5s delay between sends to avoid Telegram rate limits.
-    *   Status messages: shows progress and final count.
-    *   **Usage**: `/test_normals`
-    *   **What it does**: Finds all NORMAL card templates in `assets/placeholders/`, prioritizes animated versions for Epic, Legendary, Mythic, sends each card as a document with a caption showing rarity, and reports how many cards were sent.
-*   Create animated WebP files for rarer cards with holographic/glowing effects.
-*   **Getting Group Chat Icon**:
-    *   Use `bot.get_chat(chat_id)` to get chat object.
-    *   Access the `photo` field of the chat object.
-    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
-*   **Getting User Profile Picture**:
-    *   Use `bot.get_user_profile_photos(user_id=user_id, limit=1)` to get the most recent profile picture.
-    *   Use `bot.get_file()` and `bot.download_file()` to download the image.
-    *   This works even if the user isn't registered, as long as the bot has access to them and they have a profile picture set.
-*   Cards are sent as photos via `answer_photo`, not stickers.
-*   Cards are sent as photos via `answer_photo`, not stickers. To make them appear larger, we can:
-    1.  Use `answer_document` instead of `answer_photo` (shows larger)
-    2.  Ensure images are sent at full resolution
-*   Cards are sent as photos via `answer_photo`, not stickers. To make them appear larger, we can:
-    1.  Use `answer_document` instead of `answer_photo` (shows larger)
-    2.  Ensure images are sent at full resolution
-*   Updating the code to send cards larger. For rarer cards (Epic, Legendary, Mythic), sending as documents (larger display) and using animated versions when available:
-*   Updating the code to send cards larger. For rarer cards (Epic, Legendary, Mythic), sending as documents (larger display) and using animated versions when available:
-*   Updating the code to send all cards (including Common and Rare) as documents so they display larger:
-*   Updating the code so all cards (Common, Rare, Epic, Legendary, Mythic) are sent as documents, which displays them larger in Telegram chats.
-
-## DATABASE
-
-*   Use `database/session.py` for database session management.
-*   Use `AsyncSession` from SQLAlchemy for asynchronous database operations.
-*   Implement `get_session` dependency function to get database session.
-*   Modify `database/models.py` to add message logging.
-    *   **New Model `MessageLog`**:
-        *   `id` (BigInt, PK, auto-increment)
-        *   `user_id` (BigInt, FK to User.telegram_id, indexed)
-        *   `chat_id` (BigInt, FK to GroupChat.chat_id)
-        *   `content` (Text, store truncated message text up to 500 chars)
-        *   `created_at` (DateTime, default now, indexed)
-            *   Use `insert_default=lambda: datetime.now(timezone.utc)` instead of `default_factory` for non-dataclass SQLAlchemy models.
-            *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
-    *   **`UserCard.acquired_at`**:
-        *   Use `insert_default=lambda: datetime.now(timezone.utc)` instead of `default_factory` for non-dataclass SQLAlchemy models.
-        *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
-        *   Must define `DateTime(timezone=True)` as the first argument to `mapped_column` to ensure timezone awareness.
-    *   **`UserCard.display_id`**:
-        *   `display_id`: Short human-readable unique ID (e.g., "POM-A1B2"). String(10), nullable=False, unique=True, index=True.
-
-## SCHEDULER
-
-*   Implement `services/scheduler.py` using `apscheduler`.
-    *   Create `DropScheduler` class using APScheduler's `AsyncIOScheduler`.
-    *   Job `trigger_random_drops` runs every X minutes (default: 10, configurable).
-    *   Fetches active groups from the database.
-    *   For each group (or a
+    *   `delete_blueprint(blueprint_id: str) -> bool

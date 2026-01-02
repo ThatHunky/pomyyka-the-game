@@ -12,6 +12,7 @@ from database.session import get_session
 from logging_config import get_logger
 from services import DropManager
 from utils.card_ids import generate_unique_display_id
+from utils.telegram_utils import safe_callback_answer
 
 logger = get_logger(__name__)
 
@@ -40,7 +41,7 @@ async def handle_claim_drop_simple(
         drop_manager: DropManager instance.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
@@ -51,7 +52,7 @@ async def handle_claim_drop_simple(
 
     if not claimed:
         # Drop already claimed by someone else
-        await callback.answer("❌ Хтось виявився спритнішим!", show_alert=True)
+        await safe_callback_answer(callback,"❌ Хтось виявився спритнішим!", show_alert=True)
         return
 
     # Try to extract template_id from message entities or reply markup
@@ -80,7 +81,7 @@ async def handle_claim_drop_simple(
             message_id=message_id,
             user_id=user.id,
         )
-        await callback.answer("Помилка: не вдалося знайти картку", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: не вдалося знайти картку", show_alert=True)
         await drop_manager.release_drop(message_id)
         return
 
@@ -108,7 +109,7 @@ async def handle_claim_drop_structured(
         drop_manager: DropManager instance.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
@@ -119,7 +120,7 @@ async def handle_claim_drop_structured(
 
     if not claimed:
         # Drop already claimed by someone else
-        await callback.answer("❌ Хтось виявився спритнішим!", show_alert=True)
+        await safe_callback_answer(callback,"❌ Хтось виявився спритнішим!", show_alert=True)
         return
 
     # Parse template ID
@@ -131,7 +132,7 @@ async def handle_claim_drop_structured(
             template_id=callback_data.template_id,
             user_id=user.id,
         )
-        await callback.answer("Помилка: невалідний ID картки", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: невалідний ID картки", show_alert=True)
         await drop_manager.release_drop(message_id)
         return
 
@@ -190,7 +191,7 @@ async def _award_card_and_update_message(
                     template_id=template_id,
                     user_id=user.id,
                 )
-                await callback.answer("Помилка: картка не знайдена", show_alert=True)
+                await safe_callback_answer(callback,"Помилка: картка не знайдена", show_alert=True)
                 # Release the claim since we can't award the card
                 await drop_manager.release_drop(message_id)
                 return
@@ -221,7 +222,7 @@ async def _award_card_and_update_message(
                 success_text,
                 parse_mode="Markdown",
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
 
             logger.info(
                 "Drop claimed and card awarded",
@@ -241,7 +242,7 @@ async def _award_card_and_update_message(
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("Помилка при нагородженні карткою", show_alert=True)
+            await safe_callback_answer(callback,"Помилка при нагородженні карткою", show_alert=True)
             # Release the claim on error
             await drop_manager.release_drop(message_id)
             break

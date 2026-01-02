@@ -543,6 +543,44 @@ class SessionManager:
             )
             raise
 
+    async def update_blueprint(self, blueprint_id: str, blueprint_data: dict, ttl: int | None = None) -> bool:
+        """
+        Update an existing blueprint data entry in Redis.
+
+        NOTE: This differs from store_blueprint(), which always creates a NEW blueprint_id.
+
+        Args:
+            blueprint_id: Existing blueprint ID (UUID string).
+            blueprint_data: Updated blueprint data dictionary.
+            ttl: Optional TTL in seconds. If None, preserves existing TTL when possible,
+                 otherwise defaults to 3600 seconds.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        key = f"blueprint:{blueprint_id}"
+        client = await self._get_redis()
+
+        try:
+            ttl_to_use: int
+            if ttl is not None:
+                ttl_to_use = ttl
+            else:
+                existing_ttl = await client.ttl(key)
+                ttl_to_use = existing_ttl if existing_ttl and existing_ttl > 0 else 3600
+
+            await client.setex(key, ttl_to_use, json.dumps(blueprint_data))
+            logger.debug("Blueprint updated", blueprint_id=blueprint_id, ttl=ttl_to_use)
+            return True
+        except redis.RedisError as e:
+            logger.error(
+                "Redis error updating blueprint",
+                blueprint_id=blueprint_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return False
+
     async def get_blueprint(self, blueprint_id: str) -> Optional[dict]:
         """
         Get blueprint data from Redis.

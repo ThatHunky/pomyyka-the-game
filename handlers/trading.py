@@ -18,6 +18,7 @@ from utils.keyboards import (
     TradeProposeCallback,
 )
 from utils.text import escape_markdown
+from utils.telegram_utils import safe_callback_answer
 
 logger = get_logger(__name__)
 
@@ -35,22 +36,22 @@ async def handle_trade_propose(callback: CallbackQuery, callback_data: TradeProp
     This sends an ephemeral message to the opponent with their cards for selection.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_trade_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія обміну не знайдена або застаріла", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія обміну не знайдена або застаріла", show_alert=True)
         return
 
     # Check if user is the opponent (not the initiator)
     if session_data["initiator_id"] == user.id:
-        await callback.answer("❌ Ти не можеш обмінятися з самим собою", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не можеш обмінятися з самим собою", show_alert=True)
         return
 
     # Update session with opponent ID
@@ -77,7 +78,7 @@ async def handle_trade_propose(callback: CallbackQuery, callback_data: TradeProp
             cards = list(result.scalars().all())
 
             if not cards:
-                await callback.answer(
+                await safe_callback_answer(callback,
                     "❌ У тебе немає карток для обміну",
                     show_alert=True,
                 )
@@ -118,7 +119,7 @@ async def handle_trade_propose(callback: CallbackQuery, callback_data: TradeProp
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
-            await callback.answer("Оберіть картку через @DumpsterChroniclesBot")
+            await safe_callback_answer(callback,"Оберіть картку через @DumpsterChroniclesBot")
             break
 
         except Exception as e:
@@ -129,7 +130,7 @@ async def handle_trade_propose(callback: CallbackQuery, callback_data: TradeProp
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 
@@ -244,34 +245,34 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
     When both users confirm, execute atomic card swap.
     """
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_trade_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія обміну не знайдена або застаріла", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія обміну не знайдена або застаріла", show_alert=True)
         return
 
     # Check if user is part of this trade
     if user.id not in [session_data["initiator_id"], session_data.get("opponent_id")]:
-        await callback.answer("❌ Ти не є учасником цього обміну", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не є учасником цього обміну", show_alert=True)
         return
 
     # Check if opponent card is selected
     if not session_data.get("opponent_card_id"):
-        await callback.answer("❌ Суперник ще не обрав картку", show_alert=True)
+        await safe_callback_answer(callback,"❌ Суперник ще не обрав картку", show_alert=True)
         return
 
     # Confirm trade
     both_confirmed = await session_manager.confirm_trade(callback_data.session_id, user.id)
 
     if not both_confirmed:
-        await callback.answer("✅ Підтверджено! Очікуємо підтвердження суперника...")
+        await safe_callback_answer(callback,"✅ Підтверджено! Очікуємо підтвердження суперника...")
         return
 
     # Both confirmed - execute trade
@@ -303,7 +304,7 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
                         initiator_card_id=str(initiator_card_id),
                         opponent_card_id=str(opponent_card_id),
                     )
-                    await callback.answer("❌ Помилка: картка не знайдена", show_alert=True)
+                    await safe_callback_answer(callback,"❌ Помилка: картка не знайдена", show_alert=True)
                     await session_manager.delete_trade_session(callback_data.session_id)
                     break
 
@@ -331,7 +332,7 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
                     success_text,
                     parse_mode="Markdown",
                 )
-                await callback.answer("✅ Обмін завершено!")
+                await safe_callback_answer(callback,"✅ Обмін завершено!")
 
                 # Clean up session
                 await session_manager.delete_trade_session(callback_data.session_id)
@@ -345,7 +346,7 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
                     exc_info=True,
                 )
                 await session.rollback()
-                await callback.answer("❌ Помилка при виконанні обміну", show_alert=True)
+                await safe_callback_answer(callback,"❌ Помилка при виконанні обміну", show_alert=True)
                 await session_manager.delete_trade_session(callback_data.session_id)
                 break
 
@@ -355,7 +356,7 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
             session_id=callback_data.session_id,
             error=str(e),
         )
-        await callback.answer("❌ Помилка: невалідний ID картки", show_alert=True)
+        await safe_callback_answer(callback,"❌ Помилка: невалідний ID картки", show_alert=True)
         await session_manager.delete_trade_session(callback_data.session_id)
 
 
@@ -363,22 +364,22 @@ async def handle_trade_confirm(callback: CallbackQuery, callback_data: TradeConf
 async def handle_trade_cancel(callback: CallbackQuery, callback_data: TradeCancelCallback) -> None:
     """Handle trade cancellation."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     session_data = await session_manager.get_trade_session(callback_data.session_id)
     if not session_data:
-        await callback.answer("❌ Сесія обміну не знайдена", show_alert=True)
+        await safe_callback_answer(callback,"❌ Сесія обміну не знайдена", show_alert=True)
         return
 
     # Check if user is part of this trade
     if user.id not in [session_data["initiator_id"], session_data.get("opponent_id")]:
-        await callback.answer("❌ Ти не є учасником цього обміну", show_alert=True)
+        await safe_callback_answer(callback,"❌ Ти не є учасником цього обміну", show_alert=True)
         return
 
     # Delete session and update message
@@ -388,4 +389,4 @@ async def handle_trade_cancel(callback: CallbackQuery, callback_data: TradeCance
         "❌ **Обмін скасовано**",
         parse_mode="Markdown",
     )
-    await callback.answer("Обмін скасовано")
+    await safe_callback_answer(callback,"Обмін скасовано")

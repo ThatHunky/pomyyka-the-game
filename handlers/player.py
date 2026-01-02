@@ -13,6 +13,8 @@ from aiogram.types import (
     Message,
 )
 from sqlalchemy import delete, func, select
+
+from utils.animations import send_card_animation, send_card_animation_to_callback
 from sqlalchemy.orm import selectinload
 
 from database.enums import BiomeType, Rarity
@@ -36,6 +38,7 @@ from utils.keyboards import (
     get_stats_keyboard,
 )
 from utils.text import escape_markdown
+from utils.telegram_utils import safe_callback_answer
 
 logger = get_logger(__name__)
 
@@ -426,7 +429,7 @@ async def cmd_help(message: Message) -> None:
 async def handle_menu_navigation(callback: CallbackQuery) -> None:
     """Handle main menu navigation callback."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     await safe_edit_text(
@@ -435,20 +438,20 @@ async def handle_menu_navigation(callback: CallbackQuery) -> None:
         parse_mode="Markdown",
         reply_markup=get_main_menu_inline_keyboard(),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(NavigationCallback.filter(F.action == "profile"))
 async def handle_profile_navigation(callback: CallbackQuery) -> None:
     """Handle profile navigation callback."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     # Redirect to profile command logic
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     async for session in get_session():
@@ -465,7 +468,7 @@ async def handle_profile_navigation(callback: CallbackQuery) -> None:
                 await callback.message.edit_text(
                     "❌ Користувача не знайдено. Використайте /start для реєстрації.",
                 )
-                await callback.answer()
+                await safe_callback_answer(callback)
                 break
 
             total_cards = len(db_user.cards)
@@ -512,7 +515,7 @@ async def handle_profile_navigation(callback: CallbackQuery) -> None:
                 parse_mode="Markdown",
                 reply_markup=get_profile_keyboard(),
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
             break
 
         except Exception as e:
@@ -522,7 +525,7 @@ async def handle_profile_navigation(callback: CallbackQuery) -> None:
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 
@@ -542,7 +545,7 @@ async def handle_stats_navigation(callback: CallbackQuery) -> None:
 async def handle_help_navigation(callback: CallbackQuery) -> None:
     """Handle help navigation callback."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     help_text = (
@@ -575,7 +578,7 @@ async def handle_help_navigation(callback: CallbackQuery) -> None:
         parse_mode="Markdown",
         reply_markup=get_help_keyboard(),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(InventoryCallback.filter())
@@ -589,12 +592,12 @@ async def handle_inventory_pagination(
 async def _show_inventory(callback: CallbackQuery, page: int) -> None:
     """Show inventory page (shared logic)."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     async for session in get_session():
@@ -611,7 +614,7 @@ async def _show_inventory(callback: CallbackQuery, page: int) -> None:
                     parse_mode="Markdown",
                     reply_markup=get_help_keyboard(),  # Use inline keyboard for edit_text
                 )
-                await callback.answer()
+                await safe_callback_answer(callback)
                 break
 
             total_pages = (total_cards + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE
@@ -653,7 +656,7 @@ async def _show_inventory(callback: CallbackQuery, page: int) -> None:
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
             break
 
         except Exception as e:
@@ -663,7 +666,7 @@ async def _show_inventory(callback: CallbackQuery, page: int) -> None:
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 
@@ -673,18 +676,18 @@ async def handle_card_view(
 ) -> None:
     """Handle card detail view."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     try:
         card_id = UUID(callback_data.card_id)
     except ValueError:
-        await callback.answer("❌ Невірний ID картки", show_alert=True)
+        await safe_callback_answer(callback,"❌ Невірний ID картки", show_alert=True)
         return
 
     async for session in get_session():
@@ -698,7 +701,7 @@ async def handle_card_view(
             user_card = result.scalar_one_or_none()
 
             if not user_card:
-                await callback.answer("❌ Картка не знайдена", show_alert=True)
+                await safe_callback_answer(callback,"❌ Картка не знайдена", show_alert=True)
                 break
 
             template = user_card.template
@@ -823,26 +826,26 @@ async def handle_card_view(
                         animated_gif_path = image_path.parent / f"{image_path.stem}_animated.gif"
                         
                         if animated_mp4_path.exists():
-                            # Use answer_animation with MP4 - Telegram displays it as GIF
-                            animation_file = FSInputFile(str(animated_mp4_path))
-                            await callback.message.answer_animation(
-                                animation=animation_file,
-                                caption=card_text,
-                                parse_mode="Markdown",
+                            # Use helper function for proper animation parameters
+                            await send_card_animation_to_callback(
+                                callback.message,
+                                animated_mp4_path,
+                                card_text,
                                 reply_markup=keyboard,
+                                parse_mode="Markdown",
                             )
-                            await callback.answer()
+                            await safe_callback_answer(callback)
                             break
                         elif animated_gif_path.exists():
                             # Fallback to GIF if MP4 doesn't exist
-                            animation_file = FSInputFile(str(animated_gif_path))
-                            await callback.message.answer_animation(
-                                animation=animation_file,
-                                caption=card_text,
-                                parse_mode="Markdown",
+                            await send_card_animation_to_callback(
+                                callback.message,
+                                animated_gif_path,
+                                card_text,
                                 reply_markup=keyboard,
+                                parse_mode="Markdown",
                             )
-                            await callback.answer()
+                            await safe_callback_answer(callback)
                             break
                     
                     # Fallback to regular photo (for Common/Rare or if animated doesn't exist)
@@ -854,7 +857,7 @@ async def handle_card_view(
                             parse_mode="Markdown",
                             reply_markup=keyboard,
                         )
-                        await callback.answer()
+                        await safe_callback_answer(callback)
                         break
                 except Exception as e:
                     logger.warning(
@@ -870,7 +873,7 @@ async def handle_card_view(
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
             break
 
         except Exception as e:
@@ -881,7 +884,7 @@ async def handle_card_view(
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка при завантаженні картки", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка при завантаженні картки", show_alert=True)
             break
 
 
@@ -894,12 +897,12 @@ async def handle_stats_refresh(callback: CallbackQuery) -> None:
 async def _show_stats(callback: CallbackQuery) -> None:
     """Show stats (shared logic)."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     async for session in get_session():
@@ -916,7 +919,7 @@ async def _show_stats(callback: CallbackQuery) -> None:
                 await callback.message.edit_text(
                     "❌ Користувача не знайдено. Використайте /start для реєстрації.",
                 )
-                await callback.answer()
+                await safe_callback_answer(callback)
                 break
 
             total_cards = len(db_user.cards)
@@ -960,7 +963,7 @@ async def _show_stats(callback: CallbackQuery) -> None:
                 parse_mode="Markdown",
                 reply_markup=get_stats_keyboard(),
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
             break
 
         except Exception as e:
@@ -970,7 +973,7 @@ async def _show_stats(callback: CallbackQuery) -> None:
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 
@@ -1000,18 +1003,18 @@ async def handle_scrap_card_request(
 ) -> None:
     """Handle initial scrap card request (show confirmation)."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     try:
         card_id = UUID(callback_data.card_id)
     except ValueError:
-        await callback.answer("❌ Невірний ID картки", show_alert=True)
+        await safe_callback_answer(callback,"❌ Невірний ID картки", show_alert=True)
         return
 
     async for session in get_session():
@@ -1025,7 +1028,7 @@ async def handle_scrap_card_request(
             user_card = result.scalar_one_or_none()
 
             if not user_card:
-                await callback.answer("❌ Картка не знайдена", show_alert=True)
+                await safe_callback_answer(callback,"❌ Картка не знайдена", show_alert=True)
                 break
 
             template = user_card.template
@@ -1050,7 +1053,7 @@ async def handle_scrap_card_request(
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
-            await callback.answer()
+            await safe_callback_answer(callback)
             break
 
         except Exception as e:
@@ -1061,7 +1064,7 @@ async def handle_scrap_card_request(
                 error=str(e),
                 exc_info=True,
             )
-            await callback.answer("❌ Помилка", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка", show_alert=True)
             break
 
 
@@ -1071,18 +1074,18 @@ async def handle_scrap_card_confirm(
 ) -> None:
     """Handle confirmed card scrapping (delete card and award scraps)."""
     if not callback.message:
-        await callback.answer("Помилка: повідомлення не знайдено", show_alert=True)
+        await safe_callback_answer(callback,"Помилка: повідомлення не знайдено", show_alert=True)
         return
 
     user = callback.from_user
     if not user:
-        await callback.answer("Помилка", show_alert=True)
+        await safe_callback_answer(callback,"Помилка", show_alert=True)
         return
 
     try:
         card_id = UUID(callback_data.card_id)
     except ValueError:
-        await callback.answer("❌ Невірний ID картки", show_alert=True)
+        await safe_callback_answer(callback,"❌ Невірний ID картки", show_alert=True)
         return
 
     async for session in get_session():
@@ -1097,7 +1100,7 @@ async def handle_scrap_card_confirm(
             user_card = result.scalar_one_or_none()
 
             if not user_card:
-                await callback.answer("❌ Картка не знайдена", show_alert=True)
+                await safe_callback_answer(callback,"❌ Картка не знайдена", show_alert=True)
                 break
 
             template = user_card.template
@@ -1148,7 +1151,7 @@ async def handle_scrap_card_confirm(
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
-            await callback.answer(f"✅ Отримано {reward} Решток!")
+            await safe_callback_answer(callback,f"✅ Отримано {reward} Решток!")
             break
 
         except Exception as e:
@@ -1160,5 +1163,5 @@ async def handle_scrap_card_confirm(
                 exc_info=True,
             )
             await session.rollback()
-            await callback.answer("❌ Помилка при розпиленні картки", show_alert=True)
+            await safe_callback_answer(callback,"❌ Помилка при розпиленні картки", show_alert=True)
             break
