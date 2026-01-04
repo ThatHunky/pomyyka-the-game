@@ -70,3 +70,4 @@ dmypy.json
 # Chat exports (keep directory but ignore JSON files)
 data/chat_exports/*.json
 data/chat_exports/*.txt
+data/chat_exports/помийка
