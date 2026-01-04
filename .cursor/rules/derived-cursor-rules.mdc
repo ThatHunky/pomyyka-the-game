@@ -13,7 +13,7 @@ globs: *
 ## TECH STACK
 
 *   Python: 3.14
-*   aiogram: 3.x -> 3.17 (>=3.17,<4.0)
+*   aiogram: 3.x -> 3.24 (>=3.17,<4.0) -> 3.24.0 (Exact Version Pinning) -> 3.24. (Exact Version Pinning, latest)
 *   SQLAlchemy: Async
 *   PostgreSQL: 17-alpine
 *   Redis: alpine
@@ -22,7 +22,7 @@ globs: *
 *   asyncpg
 *   alembic
 *   apscheduler
-*   google-genai: >=1.0.0 -> 1.56.0 (Strict versioning)
+*   google-genai: >=1.0.0 -> 1.56.0 -> Updated to latest (Exact Version Pinning)
 *   pydantic: >=2.10 (>=2.10,<3.0)
 *   redis: ^5.2.0 (>=5.2.0,<6.0)
 *   Pillow >=10.0.0
@@ -266,6 +266,10 @@ globs: *
             *   The bot MUST load the `UserCard` with `selectinload(UserCard.template)` (and optionally user) for a clear confirmation prompt.
             *   Inline **Confirm/Cancel** buttons MUST be provided.
             *   On confirm: delete the `UserCard` row.
+*   When sending card templates, ensure safe escaping/sanitization for dynamic fields (card name, username, etc.) in that message to prevent malformed/unfinished markup entities. Use `utils/text.py` with `escape_markdown()`. This applies specifically to the `handle_card_template_give` handler in `handlers/admin.py`.
+    *   When formatting messages in `handle_card_template_give`, change "**Видача картки**" to "*Видача картки*" to avoid potential parsing issues with Telegram's Markdown.
+*   **Dependency Management**: Pin exact versions for all runtime dependencies in `pyproject.toml`. Consider generating a `requirements.lock` file using tools like `uv pip compile` or `pip-tools` for full dependency locking.
+*   **Pre-commit Hooks**: Check `.pre-commit-config.yaml` for tool versions and update them as part of the dependency update process.
 
 ## WORKFLOW & RELEASE RULES
 
@@ -277,6 +281,14 @@ globs: *
 *   The Dockerfile must install `ffmpeg`.
 *   Apply all changes to both manual card creation (`/addcard` in `handlers/admin.py`) and AI-assisted card creation (`/autocard` in `handlers/admin_autocard.py`).
 *   When implementing pagination for `/browsecards`, use offset and limit to manage content. Navigation buttons should use callback data based on the page number. Consider adding filtering to improve usability.
+*   Before releasing dependency updates:
+    1.  Determine the latest versions for each dependency.
+    2.  Bump the version pins in `pyproject.toml` to the exact versions.
+    3.  Run tests.
+    4.  Update the pre-commit hook revisions in `.pre-commit-config.yaml`.
+    5.  Run `pre-commit run --all-files`.
+    6.  Clean out the `coverage.xml` and `htmlcov` files. Add these to `.gitignore` if not already present.
+    7.  Update documentation as necessary.
 
 ## DEBUGGING
 
@@ -309,7 +321,7 @@ globs: *
             *   Identified Issues:
                 1.  **Missing Loop Flag in MP4**: Telegram needs MP4 files to have explicit loop metadata. The current ffmpeg command doesn't set the loop count in the MP4 container.
                     *   Fix: Add `-stream_loop -1` (infinite loop) flag to ffmpeg command.
-                2.  **Missing Duration Parameter**: When sending animations via `answer_animation()`, Telegram benefits from knowing the duration upfront.
+                2.  **Missing Duration Parameter**: When sending animations via `answer_animation()` Telegram benefits from knowing the duration upfront.
                     *   Fix: Calculate and pass `duration` parameter to `answer_animation()`.
                 3.  **Possible Profile/Level Issues**: H.264 profile and level might affect compatibility across different Telegram clients.
                     *   Fix: Explicitly set H.264 profile to `baseline` or `main` for maximum compatibility.
@@ -377,24 +389,3 @@ globs: *
                 python regenerate_all_animations.py
                 ```
             2.  **Generate a new card** with Epic/Legendary/Mythic rarity:
-                ```bash
-                /autocard @username
-                ```
-            3.  **Test on Desktop Telegram**:
-                *   Animation should autoplay immediately
-                *   Should loop continuously
-                *   Should display as GIF (not video)
-            4.  **Test on Mobile Telegram**:
-                *   Animation should autoplay on open
-                *   Should not show video player controls
-                *   Should loop smoothly
-            *   ✅ File sizes: Smaller than equivalent GIFs
-        *   **Rollback Plan (if needed):**
-            *   If issues persist, you can:
-                1.  Revert ffmpeg changes in `services/card_animator.py`
-                2.  Remove `utils/animations.py`
-                3.  Restore original `answer_animation()` calls in handlers
-                4.  Use GIF format instead of MP4 (set in card_animator.py)
-*   **Card Info Generation**: Investigate and fix issues related to incorrect card information generation. This is a high priority.
-    *   The image generation model isn't incorporating blueprint text fields, just leaving placeholders. This could be related to the way prompts are structured in the "NanoBanana" service. It seems the final card image generation might not be including necessary blueprint JSON fields in the prompt. It's possible they avoided instructing the model to produce text to prevent inaccuracies, given how generative models handle text.
-    *   To fix this, pass full card fields into the image prompt. Extend `ArtForgeService.forge_card_image(...)` and `_generate_image_sync(...)` to accept an optional `card_fields: dict | None`. When a placeholder is used, append a

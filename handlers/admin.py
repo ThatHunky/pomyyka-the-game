@@ -2914,11 +2914,35 @@ async def handle_card_template_give(
         return
     
     await safe_callback_answer(callback)
-    await callback.message.answer(
-        f"📤 **Видача картки**\n\n"
-        f"Картка: `{callback_data.template_id}`\n\n"
-        f"Введіть user_id користувача для видачі картки:\n"
-        f"`/givecard <user_id> {callback_data.template_id}`\n\n"
-        f"Або використайте команду `/givecard` з повним ID.",
-        parse_mode="Markdown",
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад до картки",
+                    callback_data=AdminCardBrowseCallback(
+                        action="view",
+                        template_id=callback_data.template_id,
+                        page=callback_data.page,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад до списку",
+                    callback_data=AdminCardBrowseCallback(
+                        action="list",
+                        page=callback_data.page,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        "📤 Видача картки\n\n"
+        f"Картка: {callback_data.template_id}\n\n"
+        "Введіть user_id користувача для видачі картки:\n"
+        f"/givecard <user_id> {callback_data.template_id}\n\n"
+        "Або використайте команду /givecard з повним ID.",
+        reply_markup=keyboard,
     )
