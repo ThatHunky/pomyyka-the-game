@@ -337,13 +337,23 @@ class NanoBananaService(ArtForgeService):
             # Provide full card fields to the image model so it can render text onto the template.
             # Without this, the model only sees the visual prompt and will often leave placeholders
             # like "НАЗВА КАРТКИ" unchanged.
+            # Calculate derived battle stats for display
+            stats = blueprint.stats or {}
+            def_val = stats.get("def", 0)
+            meme_val = stats.get("meme", 0)
+            
+            ac_val = 10 + (def_val // 2)
+            init_val = stats.get("speed", meme_val // 2)
+
             card_fields = {
                 "name": blueprint.name,
                 "biome": blueprint.biome.value,
                 "rarity": blueprint.rarity.value,
-                "atk": blueprint.stats.get("atk"),
-                "def": blueprint.stats.get("def"),
-                "meme": blueprint.stats.get("meme"),
+                "atk": stats.get("atk"),
+                "def": def_val,
+                "meme": meme_val,
+                "ac": ac_val,
+                "init": init_val,
                 "lore": blueprint.lore,
                 "attacks": blueprint.attacks,
                 "weakness": blueprint.weakness,

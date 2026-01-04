@@ -341,6 +341,8 @@ class ArtForgeService:
                     atk = _get("atk") or _get("stats_atk")
                     defense = _get("def") or _get("stats_def")
                     meme = _get("meme") or _get("stats_meme")
+                    ac = _get("ac")
+                    init = _get("init")
                     lore_ua = _get("lore") or _get("lore_ua")
                     print_date = _get("print_date")
                     attacks = card_fields.get("attacks")
@@ -366,7 +368,7 @@ class ArtForgeService:
                     }
                     biome_emoji = biome_emoji_map.get(biome_ua or "", "🌍")
                     rarity_emoji = rarity_emoji_map.get(rarity_en or "", "⚪")
-
+                    
                     rarity_ua_map = {
                         "Common": "Звичайна",
                         "Rare": "Рідкісна",
@@ -393,10 +395,14 @@ class ArtForgeService:
                         enhanced_prompt += f"- Rarity badge (UA): {rarity_emoji} {rarity_ua.upper()}\n"
                     if atk is not None:
                         enhanced_prompt += f"- ⚔️ ATK: {atk}\n"
-                    if meme is not None:
-                        enhanced_prompt += f"- 🎭 MEME: {meme}\n"
                     if defense is not None:
                         enhanced_prompt += f"- 🛡️ DEF: {defense}\n"
+                    if meme is not None:
+                        enhanced_prompt += f"- 🎭 MEME: {meme}\n"
+                    if ac is not None:
+                        enhanced_prompt += f"- 🛡️ AC (Armor Class): {ac}\n"
+                    if init is not None:
+                        enhanced_prompt += f"- ⚡ INIT (Initiative): {init}\n"
                     if print_date:
                         enhanced_prompt += f"- Print date (MM/YYYY): {print_date}\n"
                     if lore_ua:

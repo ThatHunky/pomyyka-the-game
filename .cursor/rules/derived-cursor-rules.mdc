@@ -13,7 +13,7 @@ globs: *
 ## TECH STACK
 
 *   Python: 3.14
-*   aiogram: 3.x -> 3.24 (>=3.17,<4.0) -> 3.24.0 (Exact Version Pinning) -> 3.24. (Exact Version Pinning, latest)
+*   aiogram: 3.24. (Exact Version Pinning, latest)
 *   SQLAlchemy: Async
 *   PostgreSQL: 17-alpine
 *   Redis: alpine
@@ -22,7 +22,7 @@ globs: *
 *   asyncpg
 *   alembic
 *   apscheduler
-*   google-genai: >=1.0.0 -> 1.56.0 -> Updated to latest (Exact Version Pinning)
+*   google-genai: Updated to latest (Exact Version Pinning)
 *   pydantic: >=2.10 (>=2.10,<3.0)
 *   redis: ^5.2.0 (>=5.2.0,<6.0)
 *   Pillow >=10.0.0
@@ -97,6 +97,7 @@ globs: *
 *   Video Effects Templates: `VIDEO_EFFECTS_TEMPLATES.md` - Outlines video animation effects for card animations.
 *   Test Suite Readme: tests/README.md - Provides instructions on how to run the test suite.
 *   Resolution: Use 1080p resolution (1080x1920 portrait). Only use .webp files.
+*   Battle System Documentation: Located in `/docs/mechanics/battle-system.md`. The documentation covers the system's architecture, phases, mechanics, UI, and known issues. Version: 1.0 (Turn-Based Battle System), Last updated: 2024.
 
 ## CODING STANDARDS
 
@@ -270,6 +271,13 @@ globs: *
     *   When formatting messages in `handle_card_template_give`, change "**Видача картки**" to "*Видача картки*" to avoid potential parsing issues with Telegram's Markdown.
 *   **Dependency Management**: Pin exact versions for all runtime dependencies in `pyproject.toml`. Consider generating a `requirements.lock` file using tools like `uv pip compile` or `pip-tools` for full dependency locking.
 *   **Pre-commit Hooks**: Check `.pre-commit-config.yaml` for tool versions and update them as part of the dependency update process.
+*   **Battle System Issues**: The battle system has the following known issues:
+    *   Emoji Encoding: The symbol `` is used instead of emojis in `turn_battle.py` lines 324 and 327. Replace with `🔄` and `💨`. **FIXED**
+    *   Resistance Not Implemented: The `resistance` field is stored in `CardState` but not used in `execute_attack()`. Implement resistance logic to reduce damage. **FIXED**
+    *   Missing Hit Bonus: Code comments indicate a hit bonus from ATK should exist, but `hit_roll = d20` currently lacks this bonus. **PARTIALLY FIXED: Added base +2 bonus**
+    *   Attacking Card State Check: The `execute_attack()` function does not check if the attacking card is fainted before allowing an attack. **FIXED**
+    *   Incomplete Status Effects: Only BURNED, POISONED, and FROZEN are implemented. Implement PARALYZED, CONFUSED, and ASLEEP. **FIXED**
+    *   Status Effect Order: Status effects are applied after `next_turn()`, affecting the new active player. Apply them at the beginning of a player's turn. **INTENDED BEHAVIOR**
 
 ## WORKFLOW & RELEASE RULES
 
@@ -289,6 +297,7 @@ globs: *
     5.  Run `pre-commit run --all-files`.
     6.  Clean out the `coverage.xml` and `htmlcov` files. Add these to `.gitignore` if not already present.
     7.  Update documentation as necessary.
+*   When implementing a new feature, write full Ukrainian documentation under the `/docs` directory, with subfolders for specific mechanics. For example, the battle system documentation should be in a "mechanics" subfolder.
 
 ## DEBUGGING
 
@@ -363,29 +372,4 @@ globs: *
             3.  Test with actual GIF generation as fallback (low impact, medium effort)
         *   **Additional Observations**: From the user's message: "Трохи похуйовило бо незакінчені темплейти" suggests there might also be issues with incomplete templates, not just animation format.
     *   **Implementation Status: ✅ COMPLETED**
-        *   **Changes Made:**
-            1.  **services/card_animator.py**
-                *   ✅ Added `-profile:v baseline` for maximum compatibility
-                *   ✅ Added `-level 3.0` for H.264 level specification
-                *   ✅ Fixed `-movflags` syntax to `+faststart`
-                *   ✅ Added `-preset fast` for faster encoding
-            2.  **utils/animations.py** (NEW FILE)
-                *   ✅ Created `send_card_animation()` helper function
-                *   ✅ Automatically extracts width/height from base image
-                *   ✅ Sets duration parameter (2 seconds)
-                *   ✅ Provides consistent error handling
-            3.  **handlers/admin_autocard.py**
-                *   ✅ Updated to use `send_card_animation()` helper
-                *   ✅ Removed manual `answer_animation()` calls
-            4.  **handlers/player.py**
-                *   ✅ Updated to use `send_card_animation()` helper
-                *   ✅ Improved animation sending in inventory view
-            5.  **handlers/admin.py**
-                *   ✅ Updated to use `send_card_animation()` helper
-                *   ✅ Improved test command animation sending
-        *   **Testing Instructions:**
-            1.  **Regenerate existing animations** (optional):
-                ```bash
-                python regenerate_all_animations.py
-                ```
-            2.  **Generate a new card** with Epic/Legendary/Mythic rarity:
+        *   **Changes Made

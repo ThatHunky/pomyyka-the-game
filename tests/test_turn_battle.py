@@ -7,7 +7,7 @@ from services.turn_battle import (
     create_initial_state, resolve_initiative, next_turn, 
     execute_attack, switch_active_card, resolve_status_effects
 )
-from database.enums import BiomeType, StatusEffect
+from database.enums import BiomeType, StatusEffect, AttackType
 
 # Mock Data
 def create_mock_card(id="1", name="TestCard", hp=100, ac=10, energy_cost=1):
@@ -24,8 +24,8 @@ def create_mock_card(id="1", name="TestCard", hp=100, ac=10, energy_cost=1):
         crit_chance=0,
         status_effects=[],
         attacks=[
-            {"name": "Smack", "damage": 10, "energy_cost": energy_cost, "type": "PHYSICAL"},
-            {"name": "Big Hit", "damage": "2d6", "energy_cost": 2, "type": "PHYSICAL"}
+            {"name": "Smack", "damage": 10, "energy_cost": energy_cost, "type": AttackType.PHYSICAL.value},
+            {"name": "Big Hit", "damage": "2d6", "energy_cost": 2, "type": AttackType.PHYSICAL.value}
         ]
     )
 
@@ -58,24 +58,28 @@ def test_initiative():
     resolve_initiative(state)
     assert state.phase == BattlePhase.ACTION
     assert state.active_player_idx in [1, 2]
+    assert len(state.turn_order) == 1 # One popped to active, one remaining
     assert len(state.info_logs) > 0
 
 def test_next_turn():
     state = create_mock_state()
     state.active_player_idx = 1
-    state.player1.max_energy = 1
+    # Manually set turn order to simulate mid-round
+    state.turn_order = [2]
     
+    # Needs to transition to P2
     next_turn(state)
     
     assert state.active_player_idx == 2
-    # assert state.player2.max_energy == 2 (assuming it started at 1 and ramped)
-    # Wait, create_mock_state sets default which is 1. next_turn logic:
-    # if player.max_energy < 10: player.max_energy += 1.
-    # So if it switches to P2, P2's energy should ramp.
+    
+    # Now order empty. Next call should trigger new round (init roll)
+    # We can't easily predict winner without mocking RNG, but turn number should increment
+    original_turn = state.turn_number
     
     next_turn(state)
-    assert state.active_player_idx == 1
-    assert state.player1.max_energy == 2
+    
+    assert state.turn_number == original_turn + 1
+    assert len(state.turn_order) == 1 # One popped for start of round
 
 def test_attack_mechanics():
     state = create_mock_state()

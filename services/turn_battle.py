@@ -87,6 +87,8 @@ class BattleState(BaseModel):
     turn_number: int = 1
     info_logs: List[str] = Field(default_factory=list) # Rolling log of last N actions
 
+    turn_order: List[int] = Field(default_factory=list) # Queue of player IDs for the current round
+
     def get_player(self, idx: int) -> PlayerState:
         return self.player1 if idx == 1 else self.player2
     
@@ -155,8 +157,8 @@ def create_initial_state(
             # Calculate AC (10 + Agility/2 implied, but we use Def/2 for now)
             ac = 10 + (stats.get("def", 0) // 2)
             
-            # Init bonus (implied speed or just 0)
-            init = 0
+            # Init bonus: Try 'speed', fallback to 'meme' // 2
+            init = stats.get("speed", stats.get("meme", 0) // 2)
             
             cs = CardState(
                 id=str(card.id),
@@ -196,7 +198,7 @@ def create_initial_state(
     )
 
 def resolve_initiative(state: BattleState):
-    """Roll initiative for active cards and decide who goes first."""
+    """Roll initiative for active cards and determine round order."""
     p1_card = state.player1.active_card
     p2_card = state.player2.active_card
     
@@ -206,38 +208,45 @@ def resolve_initiative(state: BattleState):
     roll1 = roll_d20() + p1_card.initiative_bonus
     roll2 = roll_d20() + p2_card.initiative_bonus
     
-    state.add_log(f"🎲 Ініціатива: {state.player1.name} ({roll1}) vs {state.player2.name} ({roll2})")
+    state.add_log(f"🎲 Ініціатива (Раунд {state.turn_number}): {state.player1.name} ({roll1}) vs {state.player2.name} ({roll2})")
     
     if roll1 >= roll2:
-        state.active_player_idx = 1
-        state.add_log(f"👉 Хід гравця **{state.player1.name}**!")
+        state.turn_order = [1, 2]
+        state.add_log(f"👉 Першим ходить **{state.player1.name}**!")
     else:
-        state.active_player_idx = 2
-        state.add_log(f"👉 Хід гравця **{state.player2.name}**!")
+        state.turn_order = [2, 1]
+        state.add_log(f"👉 Першим ходить **{state.player2.name}**!")
         
+    # Start the first turn of the round
+    state.active_player_idx = state.turn_order.pop(0)
+    _start_turn(state)
     state.phase = BattlePhase.ACTION
 
 def next_turn(state: BattleState):
-    """Switch active player and ramp energy."""
-    # Switch player
-    state.active_player_idx = 2 if state.active_player_idx == 1 else 1
-    
-    # Start of turn for new active player
-    player = state.get_player(state.active_player_idx)
-    opponent = state.get_opponent(state.active_player_idx)
-    
-    # Increment turn counter if it's back to player 1? 
-    # Or just count global turns. Let's count turns when p1 starts.
-    if state.active_player_idx == 1:
+    """Proceed to next turn in the round, or start new round."""
+    if not state.turn_order:
+        # End of Round -> New Round
         state.turn_number += 1
+        resolve_initiative(state)
+    else:
+        # Next player in current round
+        state.active_player_idx = state.turn_order.pop(0)
+        _start_turn(state)
+
+def _start_turn(state: BattleState):
+    """Handle start-of-turn logic (mana, status)."""
+    player = state.get_player(state.active_player_idx)
     
     # Mana Ramp (Hearthstone style)
     if player.max_energy < 10:
         player.max_energy += 1
     player.current_energy = player.max_energy
     
-    state.add_log(f"🔄 **Раунд {state.turn_number}**. Хід {player.name} (🔋 {player.current_energy}/{player.max_energy})")
-    state.phase = BattlePhase.ACTION
+    state.add_log(f"🔄 Хід {player.name} (🔋 {player.current_energy}/{player.max_energy})")
+    
+    # Resolve status effects at start of turn
+    resolve_status_effects(state)
+
 
 def execute_attack(state: BattleState, attack_idx: int):
     """Active player attacks opponent's active card."""
@@ -260,6 +269,29 @@ def execute_attack(state: BattleState, attack_idx: int):
         state.add_log(f"⚠️ Недостатньо енергії! Треба {cost}, є {attacker.current_energy}.")
         return
 
+    if card_atk.is_fainted:
+        state.add_log(f"⚠️ {card_atk.name} не може атакувати, він знепритомнів.")
+        return
+
+    # Check Status Effects that trigger on Attack
+    if StatusEffect.CONFUSED in card_atk.status_effects:
+        if random.random() < 0.33:
+            self_dmg = 5
+            card_atk.current_hp -= self_dmg
+            attacker.current_energy -= cost # Consume energy on fail?
+            state.add_log(f"🌀 {card_atk.name} збентежений і вдарив себе! (-{self_dmg} HP)")
+            if card_atk.current_hp <= 0:
+                 card_atk.is_fainted = True
+                 card_atk.current_hp = 0
+                 state.add_log(f"💀 **{card_atk.name}** знепритомнів!")
+            return
+        
+    if StatusEffect.PARALYZED in card_atk.status_effects:
+        if random.random() < 0.25:
+            attacker.current_energy -= cost
+            state.add_log(f"⚡ {card_atk.name} паралізований і не може рухатись!")
+            return
+
     # Check hit (D&D AC)
     attacker.current_energy -= cost
     
@@ -271,7 +303,7 @@ def execute_attack(state: BattleState, attack_idx: int):
     # Use ATK stat as hit bonus roughly (e.g. ATK / 2)
     # We don't store raw ATK in card state, need to fetch from somewhere or assume it's roughly correlated to damage?
     # Let's assume hitting is based on d20 vs AC flat for now, maybe add small bonus.
-    hit_roll = d20  # + bonus
+    hit_roll = d20 + 2 # Start with small proficiency bonus
     
     is_crit = (d20 == 20)
     is_hit = (hit_roll >= card_def.ac) or is_crit
@@ -301,6 +333,15 @@ def execute_attack(state: BattleState, attack_idx: int):
             multiplier *= 2.0
             state.add_log(f"✨ Ефективно! (x2)")
             
+        if card_def.resistance and card_def.resistance.get("type") == atk_type:
+             reduction = int(card_def.resistance.get("reduction", 0))
+             if reduction > 0:
+                 dmg_val = max(0, dmg_val - reduction)
+                 state.add_log(f"🛡️ Стійкість! (-{reduction})")
+             else:
+                 multiplier *= 0.5
+                 state.add_log(f"🛡️ Стійкість! (x0.5)")
+
         final_dmg = int(dmg_val * multiplier)
         
         card_def.current_hp -= final_dmg
@@ -321,10 +362,10 @@ def execute_attack(state: BattleState, attack_idx: int):
                 for idx, c in enumerate(defender.deck):
                     if not c.is_fainted:
                         defender.active_card_index = idx
-                        state.add_log(f"� {defender.name} випускає **{c.name}**!")
+                        state.add_log(f"🔄 {defender.name} випускає **{c.name}**!")
                         break
     else:
-        state.add_log(f"�💨 {attacker.name} атакує: **{hit_roll}** (AC {card_def.ac}) -> Промах!")
+        state.add_log(f"💨 {attacker.name} атакує: **{hit_roll}** (AC {card_def.ac}) -> Промах!")
 
 def switch_active_card(state: BattleState, deck_index: int):
     """Active player switches their active card. Costs 1 Energy."""
@@ -358,29 +399,49 @@ def resolve_status_effects(state: BattleState):
         return
         
     new_statuses = []
+    can_act = True
     
     for status in card.status_effects:
         if status == StatusEffect.BURNED:
             dmg = 10
             card.current_hp -= dmg
             state.add_log(f"🔥 {card.name} горить: -{dmg} HP")
+            new_statuses.append(status)
         elif status == StatusEffect.POISONED:
             dmg = 10 
             card.current_hp -= dmg
             state.add_log(f"☠️ {card.name} отруєний: -{dmg} HP")
+            new_statuses.append(status)
         elif status == StatusEffect.FROZEN:
-            # Frozen skips turn logic handled elsewhere or chance to thaw?
-            # Let's say 20% chance to thaw
             if random.random() < 0.2:
                 state.add_log(f"❄️ {card.name} розтанув!")
-                continue # Don't re-add frozen
+                # Thawed, so don't add back Frozen
             else:
                 state.add_log(f"❄️ {card.name} заморожений!")
-        
-        new_statuses.append(status)
-    
+                new_statuses.append(status)
+                # Frozen prevents action? Usually yes.
+                # But implementation might just limit attacks.
+                # For now let's just keep the status.
+        elif status == StatusEffect.ASLEEP:
+            if random.random() < 0.33: # 33% chance to wake
+                 state.add_log(f"💤 {card.name} прокинувся!")
+            else:
+                 state.add_log(f"💤 {card.name} спить...")
+                 new_statuses.append(status)
+                 can_act = False # Skip turn
+        elif status == StatusEffect.PARALYZED:
+             new_statuses.append(status)
+             # Paralyzed check happens on attack
+        elif status == StatusEffect.CONFUSED:
+             new_statuses.append(status)
+             # Confused check happens on attack
+
     card.status_effects = new_statuses
     if card.current_hp <= 0:
         card.current_hp = 0
         card.is_fainted = True
         state.add_log(f"💀 **{card.name}** загинув від статусів!")
+        
+    if not can_act:
+        state.add_log(f"🛑 {card.name} пропускає хід через статус.")
+        player.current_energy = 0 # Prevent actions
