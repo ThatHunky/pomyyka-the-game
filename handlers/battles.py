@@ -312,8 +312,9 @@ async def handle_battle_card_selected(
         )
 
 
+
 async def _execute_battle(session_id: str, bot, chat_id: int, message_id: int) -> None:
-    """Execute battle and update message with results."""
+    """Initialize turn-based battle and show UI."""
     session_data = await session_manager.get_battle_session(session_id)
     if not session_data:
         return
@@ -350,12 +351,7 @@ async def _execute_battle(session_id: str, bot, chat_id: int, message_id: int) -
                 opponent_cards = list(opponent_result.scalars().all())
 
                 if len(challenger_cards) != 3 or len(opponent_cards) != 3:
-                    logger.error(
-                        "Invalid deck size",
-                        session_id=session_id,
-                        challenger_count=len(challenger_cards),
-                        opponent_count=len(opponent_cards),
-                    )
+                    logger.error("Invalid deck size", session_id=session_id)
                     return
 
                 # Get player names
@@ -364,87 +360,70 @@ async def _execute_battle(session_id: str, bot, chat_id: int, message_id: int) -
                 )
                 opponent_user_stmt = select(User).where(User.telegram_id == session_data["opponent_id"])
 
-                challenger_user_result = await session.execute(challenger_user_stmt)
-                opponent_user_result = await session.execute(opponent_user_stmt)
+                c_user = (await session.execute(challenger_user_stmt)).scalar_one_or_none()
+                o_user = (await session.execute(opponent_user_stmt)).scalar_one_or_none()
 
-                challenger_user = challenger_user_result.scalar_one_or_none()
-                opponent_user = opponent_user_result.scalar_one_or_none()
+                c_name = c_user.username if c_user and c_user.username else f"Гравець {session_data['challenger_id']}"
+                o_name = o_user.username if o_user and o_user.username else f"Гравець {session_data['opponent_id']}"
 
-                challenger_name = (
-                    challenger_user.username
-                    if challenger_user and challenger_user.username
-                    else f"Гравець {session_data['challenger_id']}"
-                )
-                opponent_name = (
-                    opponent_user.username
-                    if opponent_user and opponent_user.username
-                    else f"Гравець {session_data['opponent_id']}"
-                )
+                # INITIALIZE NEW BATTLE ENGINE
+                from services.turn_battle import create_initial_state, resolve_initiative
+                from handlers.turn_battle_handler import render_battle_ui
 
-                # Get chat biome
-                chat_biome = get_chat_biome(chat_id)
+                p1_data = {
+                    "id": session_data["challenger_id"],
+                    "name": c_name,
+                    "cards": challenger_cards
+                }
+                p2_data = {
+                    "id": session_data["opponent_id"],
+                    "name": o_name,
+                    "cards": opponent_cards
+                }
 
-                # Execute battle
-                deck1_templates = [card.template for card in challenger_cards]
-                deck2_templates = [card.template for card in opponent_cards]
+                # Create State
+                battle_state = create_initial_state(session_id, chat_id, p1_data, p2_data)
+                
+                # Roll Initiative
+                resolve_initiative(battle_state)
+                
+                # Save State
+                await session_manager.save_turn_battle_state(battle_state)
 
-                battle_result = execute_battle(
-                    deck1_templates,
-                    deck2_templates,
-                    chat_biome,
-                    player1_name=challenger_name,
-                    player2_name=opponent_name,
-                )
-
-                stake = session_data.get("stake", 0)
-                winner_id = (
-                    session_data["challenger_id"]
-                    if battle_result["winner"] == 1
-                    else session_data["opponent_id"]
-                )
-
-                # Update balances atomically
-                async with session.begin():
-                    # Deduct stake from both
-                    challenger_user.balance -= stake
-                    opponent_user.balance -= stake
-
-                    # Award winner (stake * 2)
-                    if battle_result["winner"] == 1:
-                        challenger_user.balance += stake * 2
-                    else:
-                        opponent_user.balance += stake * 2
-
-                    session.add(challenger_user)
-                    session.add(opponent_user)
-
-                # Generate battle summary
-                summary = generate_battle_summary(battle_result, stake)
-
+                # Render UI
+                text, markup = render_battle_ui(battle_state, 0) # 0 means neutral view? No, we need to handle permissions.
+                # Actually render_battle_ui takes user_id to determine perspective.
+                # The message in chat is shared.
+                # So we should probably render standard view, or maybe perspective of active player?
+                # The callback handler manages personalized views during interaction, but initial message is public.
+                # Let's render from Player 1 perspective for now, or ensure UI is robust for spectators.
+                # Wait, Telegram messages are same for everyone.
+                # So the keyboard needs to handle permission checks (which it does in handler).
+                # But buttons might say "Your Turn". 
+                # Let's render from correct active player perspective just for the text.
+                
+                active_uid = battle_state.get_player(battle_state.active_player_idx).user_id
+                text, markup = render_battle_ui(battle_state, active_uid)
+                
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=summary,
+                    text=text,
                     parse_mode="Markdown",
+                    reply_markup=markup
                 )
 
-                # Clean up
-                await session_manager.delete_battle_session(session_id)
-                import redis.asyncio as redis
-                from config import settings
-                redis_client = await redis.from_url(
-                    settings.redis_url, encoding="utf-8", decode_responses=True
-                )
-                await redis_client.delete(f"user_active_battle:{session_data['challenger_id']}")
-                await redis_client.delete(f"user_active_battle:{session_data['opponent_id']}")
-                await redis_client.aclose()
+                # Clean up legacy session pointers?
+                # We need to keep pointing to this battle session actually?
+                # The legacy session data is used for "setup", "turn_battle" uses same session_id key?
+                # Yes, session_id is consistent.
+                
+                # Clear "active_battle" pointers so users can't modify decks anymore?
+                # Actually we might want to keep them to know they are IN a battle.
+                # But logic in inline.py checks this key.
+                # Let's keep them engaged.
 
-                logger.info(
-                    "Battle completed",
-                    session_id=session_id,
-                    winner_id=winner_id,
-                    stake=stake,
-                )
+                logger.info("Turn-based battle started", session_id=session_id)
                 break
 
             except Exception as e:

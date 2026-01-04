@@ -12,6 +12,7 @@ from database.session import init_db
 from handlers.admin import router as admin_router
 from handlers.admin_autocard import router as admin_autocard_router
 from handlers.battles import router as battles_router
+from handlers.turn_battle_handler import router as turn_battle_router
 from handlers.drops import router as drops_router
 from handlers.inline import router as inline_router
 from handlers.player import router as player_router
@@ -117,6 +118,7 @@ async def main() -> None:
     dp.include_router(player_router)
     dp.include_router(trading_router)
     dp.include_router(battles_router)
+    dp.include_router(turn_battle_router)
     logger.info("Routers registered")
 
     # Initialize and start schedulers

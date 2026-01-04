@@ -638,3 +638,59 @@ class SessionManager:
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None
+
+    # Turn-Based Battle State Methods
+
+    async def save_turn_battle_state(self, state) -> bool:
+        """
+        Save the complete BattleState (Pydantic model).
+        
+        Args:
+            state: BattleState instance (from services.turn_battle).
+            
+        Returns:
+            True if successful.
+        """
+        key = f"turn_battle:{state.session_id}"
+        client = await self._get_redis()
+        
+        try:
+            # Serialize Pydantic model to JSON string
+            data = state.model_dump_json()
+            await client.setex(key, self._default_ttl, data)
+            logger.debug("Battle state saved", session_id=state.session_id)
+            return True
+        except Exception as e:
+            logger.error(
+                "Error saving battle state",
+                session_id=state.session_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return False
+
+    async def get_turn_battle_state(self, session_id: str):
+        """
+        Retrieve BattleState.
+        
+        Returns:
+            BattleState instance or None.
+        """
+        from services.turn_battle import BattleState # Import here to avoid circular dependency top-level
+        
+        key = f"turn_battle:{session_id}"
+        client = await self._get_redis()
+        
+        try:
+            data = await client.get(key)
+            if not data:
+                return None
+            return BattleState.model_validate_json(data)
+        except Exception as e:
+            logger.error(
+                "Error loading battle state",
+                session_id=session_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return None
